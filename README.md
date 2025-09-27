@@ -2,10 +2,45 @@
 Soft-Prompted Transformer as Scalable Cross-Embodiment Vision-Language-Action Model
 
 
+## Results on Simulations
+We evluate X-VLA across 6 simulations, which encompass hundreds of evaluation setups, spanning single-arm, bi-manual robotic systems, autonomous driving, and assessing diverse axes of generalization, including cross-embodiment, cross-environment, and cross-task adaptation.
 
+|Simpler|||Libero|||||Calvin|RoboTwin_2.0||VLABench|NAVSIM|
+|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
+| VM | VM | WidowX |Spatial|Object|Goal|Long|Avg|ABC&rightarrow;D|Easy|Hard|Avg. PS|PDMS|
+| 80.4 | 75.7 | 95.8 | 98.2 | 98.6 | 97.8 | 97.6 | 98.1 | 4.43 | 70.0 | 39.0 | 51.1 | 87.3 |
 
+More detailed metrics for each benchmark are available in the following figures. Click to view: [Robotics Simulation](https://github.com/2toinf/X-VLA/blob/main/images/robo.jpeg) and [Autonomous Driving](https://github.com/2toinf/X-VLA/blob/main/images/ad.jpeg). 
 
-## Introduction
+### Server-Client Setup
+Following [π₀](https://github.com/Physical-Intelligence/openpi), we adopt a server-client setup for simulation evaluations. Specifically, we run the policy and the simulation environment in separate Python processes, using a network-based server-client setup to enable communication between them. The policy acts as the server, while the simulation environment queries it as a client.
 
+To start the server, run the following commands:
 
-Successful generalist Vision-Language-Action (VLA) models that rely on effective training across diverse robotic platforms with large-scale, cross-embodiment, heterogeneous datasets. To facilitate and leverage the heterogeneity in rich, diverse robotic data sources, we propose a novel Soft Prompt approach with minimally added parameters, by infusing prompt learning concepts into cross-embodiment robot learning and introducing separate sets of learnable embeddings for each distinct data source. These embeddings serve as embodiment-specific prompts, which in unity empower VLA models with effective exploitation of varying cross-embodiment features. Our new X-VLA, a neat flow-matching-based VLA architecture, relies exclusively on soft-prompted standard Transformer encoders with an enhanced encoding pipeline, enjoying both scalability and simplicity. Evaluated across 6 simulation environments as well as 3 real-world robotics platforms, our 0.9B instantiation-X-VLA-0.9B simultaneously achieves state-of-the-art performance over a sweep of benchmark suites, demonstrating superior results on a wide axes of capabilities, from flexible dexterity to quick adaptation across embodiments, environments, and tasks.
+```
+conda activate xvla
+bash scripts/depoly.sh
+```
+
+Next, run the evaluation scripts to test the policy. To evaluate across different simulations, make sure to set up the corresponding environments: [Libero](https://github.com/Lifelong-Robot-Learning/LIBERO), [Simpler](https://github.com/simpler-env/SimplerEnv), [Calvin](https://github.com/mees/calvin), [VLABench](https://github.com/OpenMOSS/VLABench), and [NAVSIM](https://github.com/autonomousvision/navsim).
+
+For example, to evaluate the policy on the Libero benchmark, you can run the following commands after [installing Libero in a separate Conda environment](https://github.com/Lifelong-Robot-Learning/LIBERO):
+```
+conda activate libero
+bash eval/libero/client.sh
+```
+
+#### More details on Libero
+To enable the use of the Abs EEF as the control interface on LIBERO, we replay the dataset to obtain the corresponding actions:
+```python
+for action in actions:
+    obs, reward, done, info = env.step(action)
+    abs_pos = env.env.robots[0].controller.goal_pos
+    abs_ori = env.env.robots[0].controller.goal_ori
+```
+For evaluation, the controller needs to be set to absolute control mode:
+```python
+env.reset()
+for robot in env.env.robots:
+robot.controller.use_delta=False
+```
