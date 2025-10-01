@@ -225,6 +225,7 @@ class ClientModel():
     def step(self, obs, proprio, instruction):
         if self.proprio is None: self.proprio = to_flat_array(proprio)    
         if not self.action_plan:
+            print(obs['cam_head'].shape)
             query = {
                 "proprio": json_numpy.dumps(self.proprio),
                 "language_instruction": instruction,
