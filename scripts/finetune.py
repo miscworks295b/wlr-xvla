@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 from accelerate import Accelerator
 from datasets import create_dataloader
-from xvla import xvla
+from xvla import build_xvla
 from accelerate.utils import DistributedDataParallelKwargs
 
 def submit_eval_job(eval_task, model, ckpt_path, output_dir):
@@ -85,7 +85,7 @@ def main(args):
                               project_dir=output_dir, kwargs_handlers=[kwargs])
     accelerator.init_trackers("HFP_Training")
     torch.distributed.barrier()
-    model = xvla(pretrained = args.pretrained, 
+    model = build_xvla(pretrained = args.pretrained, 
                  use_local_vlm = args.use_local_vlm,
                  action_mode = args.action_mode,
                  use_proprio = not args.drop_proprio,
