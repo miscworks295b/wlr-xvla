@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 from json import encoder
+<<<<<<< HEAD
 import random
+=======
+import time
+>>>>>>> c322bf54587969bc1bd9213cf862f80e79fe626f
 from typing import Any, Dict, Tuple
 
 import logging
@@ -35,7 +39,7 @@ from transformers import AutoModelForCausalLM
 from components.transformer import SoftPromptedTransformer
 from components.losses import EE6DLoss, JointLoss, AGIBOTJointLoss, AGIBOTEE6DLoss
 from components.preprocessor import LanguagePreprocessor, ImagePreprocessor
-
+import cv2
 LOSS_HUB = {
     "ee6d": EE6DLoss,
     "joint": JointLoss,
@@ -338,6 +342,7 @@ class XVLA(nn.Module):
         Tensor, shape [B, T=num_actions, dim_action]
             Predicted action sequence; sigmoid applied only on gripper channels.
         """
+        start_time = time.time()
         self.eval()
         enc = self.forward_vlm(input_ids=input_ids, pixel_values=image_input, image_mask=image_mask)
 
@@ -359,7 +364,12 @@ class XVLA(nn.Module):
                 **enc,
             )
         idx = self.criterion.GRIPPER_IDX
+<<<<<<< HEAD
         if self.action_mode != "agibot_ee6d": action[..., idx] = torch.sigmoid(action[..., idx])
+=======
+        action[..., idx] = torch.sigmoid(action[..., idx])
+        print("infer time:", time.time() - start_time)
+>>>>>>> c322bf54587969bc1bd9213cf862f80e79fe626f
         return action
 
     # ------------------------------ minimal service -------------------------
@@ -399,7 +409,10 @@ class XVLA(nn.Module):
                 for key in ("image0", "image1", "image2"):
                     if key in payload:
                         v = json_numpy.loads(payload[key])
-                        if isinstance(v, (list, np.ndarray)):
+                        if isinstance(v, np.ndarray) and v.ndim == 1:
+                            v = cv2.imdecode(v, cv2.IMREAD_COLOR)
+                            image_list.append(Image.fromarray(v))
+                        elif isinstance(v, (list, np.ndarray)):
                             image_list.append(Image.fromarray(np.array(v)))
                         else:
                             image_list.append(Image.open(v))
@@ -423,7 +436,7 @@ class XVLA(nn.Module):
                 steps = int(payload.get("steps", 10))
                 action = self.generate_actions(
                     input_ids=inputs["input_ids"],
-                    image_input=inputs["pixel_values"],
+                    image_input=inputs["image_input"],
                     image_mask=inputs["image_mask"],
                     domain_id=inputs["domain_id"],
                     proprio=inputs["proprio"],
@@ -494,8 +507,13 @@ def build_xvla(device: str = "cuda",
         num_actions=num_actions,
         action_mode=action_mode,
         use_proprio=use_proprio,
+<<<<<<< HEAD
         version=version
     )
+=======
+        version = version
+    ).to(torch.float32)
+>>>>>>> c322bf54587969bc1bd9213cf862f80e79fe626f
 
     if isinstance(pretrained, str):
         print(f">>>>>> load pretrain from {pretrained}")
