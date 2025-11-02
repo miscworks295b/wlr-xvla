@@ -118,7 +118,7 @@ class BaseHDF5Handler(DomainHandler):
         
         
         image_mask = torch.zeros(self.num_views, dtype=torch.bool)
-        image_mask[: len(images)] = True
+        image_mask[:len(images)] = True
         if lt is None: lt = np.arange(left.shape[0], dtype=np.float64) / float(freq)
         if rt is None: rt = np.arange(right.shape[0], dtype=np.float64) / float(freq)
 
@@ -157,4 +157,3 @@ class BaseHDF5Handler(DomainHandler):
                 "image_mask": image_mask,
                 "abs_trajectory": torch.cat([lseq, rseq], -1).float()
             }
-

@@ -155,7 +155,11 @@ def main(args):
             accelerator.print(f"finish warmup and start training param in Transformer and VLM")
             optim.param_groups[0]["lr"] = args.learning_rate * args.learning_coef
             optim.param_groups[1]["lr"] = args.learning_rate
-
+        else:
+            optim.param_groups[0]["lr"] *= 0.99999
+            optim.param_groups[1]["lr"] *= 0.99999
+            optim.param_groups[2]["lr"] *= 0.99999
+            optim.param_groups[3]["lr"] *= 0.99999
         past_time = time.time()
         data = next(train_dataloader)
         language_instruction = text_processor.encode_language(data['language_instruction'])
@@ -170,8 +174,9 @@ def main(args):
         optim.step()
         if iters % args.log_interval == 0: 
             accelerator.log({key: value.item() for key, value in loss_dict.items()}, step=iters)
-            accelerator.print(f"[Iter {iters}] [Training Loss] {loss.item()} [time_per_iter] {time.time() - past_time}")
-            
+            accelerator.log({'lr': optim.param_groups[1]['lr']}, step=iters)
+            accelerator.print(f"[Iter {iters}] [Training Loss] {loss.item()} [lr] {optim.param_groups[1]['lr']} [time_per_iter] {time.time() - past_time}")
+
         if iters % args.save_interval == 0:
             model.eval()
             accelerator.wait_for_everyone()

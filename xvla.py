@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 from json import encoder
-
+import random
 from typing import Any, Dict, Tuple
 
 import logging
@@ -33,13 +33,14 @@ from safetensors.torch import load_file
 import json_numpy
 from transformers import AutoModelForCausalLM
 from components.transformer import SoftPromptedTransformer
-from components.losses import EE6DLoss, JointLoss, AGIBOTJointLoss
+from components.losses import EE6DLoss, JointLoss, AGIBOTJointLoss, AGIBOTEE6DLoss
 from components.preprocessor import LanguagePreprocessor, ImagePreprocessor
 
 LOSS_HUB = {
     "ee6d": EE6DLoss,
     "joint": JointLoss,
-    "agibot_joint": AGIBOTJointLoss
+    "agibot_joint": AGIBOTJointLoss,
+    "cd ": AGIBOTEE6DLoss
 }
 
 
@@ -102,7 +103,8 @@ class XVLA(nn.Module):
         super().__init__()
 
         action_mode = action_mode.lower()
-        assert action_mode in {"ee6d", "joint", "agibot_joint"}, "action_mode must be 'ee6d' or 'joint'"
+        self.action_mode = action_mode
+        assert action_mode in LOSS_HUB.keys(), "unknown action_mode"
 
         # Channel layout derived from mode
         self.criterion = LOSS_HUB[action_mode]()
@@ -146,6 +148,7 @@ class XVLA(nn.Module):
         # I/O preprocessors (implementations are project-specific)
         self.text_preprocessor = LanguagePreprocessor(encoder_name=encoder_name)
         self.image_preprocessor = ImagePreprocessor(version=version)
+        self.version = version
         self.app: FastAPI | None = None
 
     # ------------------------------ utilities -------------------------------
@@ -234,6 +237,10 @@ class XVLA(nn.Module):
         action_m : Tensor
             Action with gripper channels zeroed.
         """
+        
+        if 'agibot' in self.action_mode: 
+            if random.random() < 0.5: return torch.zeros_like(proprio), action
+            else: return proprio, action
         idx = self.criterion.GRIPPER_IDX
         proprio_m = proprio.clone()
         action_m = action.clone()
@@ -352,7 +359,7 @@ class XVLA(nn.Module):
                 **enc,
             )
         idx = self.criterion.GRIPPER_IDX
-        action[..., idx] = torch.sigmoid(action[..., idx])
+        if self.action_mode != "agibot_ee6d": action[..., idx] = torch.sigmoid(action[..., idx])
         return action
 
     # ------------------------------ minimal service -------------------------
@@ -487,7 +494,7 @@ def build_xvla(device: str = "cuda",
         num_actions=num_actions,
         action_mode=action_mode,
         use_proprio=use_proprio,
-        version = version
+        version=version
     )
 
     if isinstance(pretrained, str):

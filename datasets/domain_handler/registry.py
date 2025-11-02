@@ -54,6 +54,7 @@ _REGISTRY: Dict[str, Type[DomainHandler]] = {
     "agiworld-on-site-pour": AGIWolrdHandler ,
     "agiworld-on-site-microwave": AGIWolrdHandler ,
     "agiworld-on-site-cloth": AGIWolrdHandler,
+    "agiworld-on-site-cloth-2": AGIWolrdHandler
 }
 
 def get_handler_cls(dataset_name: str) -> Type[DomainHandler]:

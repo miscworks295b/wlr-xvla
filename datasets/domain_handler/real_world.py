@@ -49,7 +49,7 @@ class AIRAgilexHQHandler(BaseHDF5Handler):
     def build_left_right(
         self, f: h5py.File
     ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray], float, float]:
-        freq, qdur = 30.0, 3.0
+        freq, qdur = 30.0, 2.0
         eef = f["observations"]["eef_6d"][()]  # [T,20]
         left, right = eef[:, :10], eef[:, 10:]
         left[:,  -1] = (left[:,  -1] * 50 < 1.0)

@@ -21,11 +21,11 @@ class EE6DLoss(nn.Module):
 
     # ---- Hard-coded hyperparameters/indices ----
     DIM_ACTION: int = 20  # Expected action dimension
-    GRIPPER_SCALE: float = 0.1
+    GRIPPER_SCALE: float = 1.0
     GRIPPER_IDX: Tuple[int, int] = (9, 19)
 
-    XYZ_SCALE: float = 100.0
-    ROT_SCALE: float = 5.0
+    XYZ_SCALE: float = 500.0
+    ROT_SCALE: float = 10.0
 
     POS_IDX_1: Tuple[int, int, int] = (0, 1, 2)
     POS_IDX_2: Tuple[int, int, int] = (10, 11, 12)
@@ -142,7 +142,7 @@ class AGIBOTJointLoss(nn.Module):
     DIM_ACTION: int = 16  # Expected action dimension
     GRIPPER_SCALE: float = 0.1
     GRIPPER_IDX: Tuple[int, int] = (14, 15)
-    JOINTS_SCALE: float = 1.0
+    JOINTS_SCALE: float = 100.0
 
     def __init__(self):
         super().__init__()
@@ -181,3 +181,63 @@ class AGIBOTJointLoss(nn.Module):
         }
 
 
+
+class AGIBOTEE6DLoss(nn.Module):
+    """
+    End-effector layout with xyz, 6D rotation, and gripper channels.
+    Uses:
+      - position (MSE) on xyz pairs
+      - rotation-6D (MSE) on two 6D segments
+      - gripper (BCE-with-logits) on two gripper indices
+    All hyperparameters/indices are hard-coded.
+    """
+
+    # ---- Hard-coded hyperparameters/indices ----
+    DIM_ACTION: int = 20  # Expected action dimension
+    GRIPPER_SCALE: float = 10.0
+    GRIPPER_IDX: Tuple[int, int] = (9, 19)
+
+    XYZ_SCALE: float = 500.0
+    ROT_SCALE: float = 10.0
+
+    POS_IDX_1: Tuple[int, int, int] = (0, 1, 2)
+    POS_IDX_2: Tuple[int, int, int] = (10, 11, 12)
+
+    ROT_IDX_1: Tuple[int, int, int, int, int, int] = (3, 4, 5, 6, 7, 8)
+    ROT_IDX_2: Tuple[int, int, int, int, int, int] = (13, 14, 15, 16, 17, 18)
+
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
+
+    def forward(self, pred_action: torch.Tensor, target_action: torch.Tensor):
+        assert pred_action.shape == target_action.shape, "pred/target shapes must match"
+        assert pred_action.dim() == 3, "expected [B, T, D]"
+        B, T, D = pred_action.shape  # noqa: F841
+
+        # Validate indices
+        _ensure_indices_valid(D, self.GRIPPER_IDX, "gripper_idx")
+        _ensure_indices_valid(D, self.POS_IDX_1, "pos_idx_1")
+        _ensure_indices_valid(D, self.POS_IDX_2, "pos_idx_2")
+        _ensure_indices_valid(D, self.ROT_IDX_1, "rot_idx_1")
+        _ensure_indices_valid(D, self.ROT_IDX_2, "rot_idx_2")
+
+        # Gripper MSE (average over both indices)
+        gripper_loss = self.mse(pred_action[:, :, self.GRIPPER_IDX], target_action[:, :, self.GRIPPER_IDX])
+        gripper_loss = gripper_loss * self.GRIPPER_SCALE
+
+        # Position xyz (two triplets)
+        pos_loss_1 = self.mse(pred_action[:, :, self.POS_IDX_1], target_action[:, :, self.POS_IDX_1])
+        pos_loss_2 = self.mse(pred_action[:, :, self.POS_IDX_2], target_action[:, :, self.POS_IDX_2])
+        position_loss = (pos_loss_1 + pos_loss_2) * self.XYZ_SCALE
+
+        # Rotation 6D (two segments)
+        rot_loss_1 = self.mse(pred_action[:, :, self.ROT_IDX_1], target_action[:, :, self.ROT_IDX_1])
+        rot_loss_2 = self.mse(pred_action[:, :, self.ROT_IDX_2], target_action[:, :, self.ROT_IDX_2])
+        rotate6D_loss = (rot_loss_1 + rot_loss_2) * self.ROT_SCALE
+
+        return {
+            "position_loss": position_loss,
+            "rotate6D_loss": rotate6D_loss,
+            "gripper_loss": gripper_loss,
+        }
