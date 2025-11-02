@@ -34,7 +34,9 @@ class DomainHandler(ABC):
         num_actions: int,
         training: bool,
         image_aug,
+        action_mode,
         lang_aug_map: dict | None,
+        **kwargs
     ) -> Iterable[dict]:
         """Yield samples for a single episode."""
         ...
@@ -96,7 +98,10 @@ class BaseHDF5Handler(DomainHandler):
         num_actions: int,
         training: bool,
         image_aug,
+        action_mode,
         lang_aug_map: dict | None,
+        use_gripper_trick:bool = False,
+        **kwargs
     ) -> Iterable[dict]:
         """Open once, yield many samples; file is always closed on exit."""
         datapath = self.meta["datalist"][traj_idx]
@@ -106,16 +111,16 @@ class BaseHDF5Handler(DomainHandler):
         with _open_h5(datapath) as f:
             # Images and mask
             images = self.get_image_datasets(f)
+            # Language
+            ins = self.read_instruction(f)
             # Domain-specific kinematics and timing
             left, right, lt, rt, freq, qdur = self.build_left_right(f)
         
+        
         image_mask = torch.zeros(self.num_views, dtype=torch.bool)
-        image_mask[: len(images)] = True
+        image_mask[:len(images)] = True
         if lt is None: lt = np.arange(left.shape[0], dtype=np.float64) / float(freq)
         if rt is None: rt = np.arange(right.shape[0], dtype=np.float64) / float(freq)
-
-        # Language
-        ins = self.read_instruction(f)
 
         # Candidate indices (optionally shuffled)
         idxs = list(self.index_candidates(left.shape[0], training))
@@ -152,4 +157,3 @@ class BaseHDF5Handler(DomainHandler):
                 "image_mask": image_mask,
                 "abs_trajectory": torch.cat([lseq, rseq], -1).float()
             }
-

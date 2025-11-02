@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 from accelerate import Accelerator
 from datasets import create_dataloader
-from xvla import xvla
+from xvla import build_xvla
 from accelerate.utils import DistributedDataParallelKwargs
 
 def submit_eval_job(eval_task, model, ckpt_path, output_dir):
@@ -42,11 +42,17 @@ def get_args_parser():
     parser.add_argument('--batch-size', default=16, type=int)
     parser.add_argument('--learning_rate', default=1e-4, type=float)
     
+    parser.add_argument('--drop_proprio', action='store_true', default=False)
+    parser.add_argument('--num_actions', default=30, type=int)
+    parser.add_argument('--action_mode', default='ee6d', type=str)
+    parser.add_argument('--rel_idx', default=[], type=int, nargs='+')
+    
     parser.add_argument('--iters', default=1000000, type=int)
     parser.add_argument('--freeze_steps', default=1000, type=float)
     parser.add_argument('--warmup_steps', default=2000, type=float)
     parser.add_argument('--train_metas_path', type=str)
     parser.add_argument('--precision', default='fp16', type=str)
+    parser.add_argument('--use_local_vlm', default=None, type=str)
     
 
     parser.add_argument('--learning_coef', default=1., type=float)
@@ -79,7 +85,12 @@ def main(args):
                               project_dir=output_dir, kwargs_handlers=[kwargs])
     accelerator.init_trackers("HFP_Training")
     torch.distributed.barrier()
-    model = xvla(pretrained = args.pretrained)
+    model = build_xvla(pretrained = args.pretrained, 
+                 use_local_vlm = args.use_local_vlm,
+                 action_mode = args.action_mode,
+                 use_proprio = not args.drop_proprio,
+                 num_actions = args.num_actions)
+    
     text_processor = model.text_preprocessor
     
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1000 / 1000
@@ -88,7 +99,9 @@ def main(args):
         batch_size = args.batch_size,
         metas_path = args.train_metas_path,
         num_actions= model.num_actions,
-        training = True
+        training = True,
+        action_mode = args.action_mode,
+        rel_idx = args.rel_idx
     ))
     
     model = model.to(torch.float32)
@@ -142,7 +155,11 @@ def main(args):
             accelerator.print(f"finish warmup and start training param in Transformer and VLM")
             optim.param_groups[0]["lr"] = args.learning_rate * args.learning_coef
             optim.param_groups[1]["lr"] = args.learning_rate
-
+        else:
+            optim.param_groups[0]["lr"] *= 0.99999
+            optim.param_groups[1]["lr"] *= 0.99999
+            optim.param_groups[2]["lr"] *= 0.99999
+            optim.param_groups[3]["lr"] *= 0.99999
         past_time = time.time()
         data = next(train_dataloader)
         language_instruction = text_processor.encode_language(data['language_instruction'])
@@ -157,15 +174,16 @@ def main(args):
         optim.step()
         if iters % args.log_interval == 0: 
             accelerator.log({key: value.item() for key, value in loss_dict.items()}, step=iters)
-            accelerator.print(f"[Iter {iters}] [Training Loss] {loss.item()} [time_per_iter] {time.time() - past_time}")
-            
+            accelerator.log({'lr': optim.param_groups[1]['lr']}, step=iters)
+            accelerator.print(f"[Iter {iters}] [Training Loss] {loss.item()} [lr] {optim.param_groups[1]['lr']} [time_per_iter] {time.time() - past_time}")
+
         if iters % args.save_interval == 0:
             model.eval()
             accelerator.wait_for_everyone()
-            accelerator.print("========start saving models=========")
-            accelerator.save_state(os.path.join(output_dir, f"ckpt-latest"), safe_serialization=True)
-            accelerator.save_model(model, os.path.join(output_dir, f"ckpt-{iters}"), safe_serialization=True)
-            
+            if accelerator.is_main_process:
+                accelerator.print("========start saving models=========")
+                accelerator.save_state(os.path.join(output_dir, f"ckpt-latest"), safe_serialization=True)
+                accelerator.save_model(model, os.path.join(output_dir, f"ckpt-{iters}"), safe_serialization=True)
             if args.eval_task != '':
                 accelerator.print(f"[Iter {iters}] Start {args.eval_task} evaluation")
                 if accelerator.is_main_process:
@@ -177,8 +195,8 @@ def main(args):
             
             accelerator.wait_for_everyone()
             model.train()
-        
-    accelerator.save_model(model, os.path.join(output_dir, f"ckpt-final"), safe_serialization=True)
+    if accelerator.is_main_process:
+        accelerator.save_model(model, os.path.join(output_dir, f"ckpt-final"), safe_serialization=True)
     if args.eval_task != '':
         
         accelerator.print(f"final Start {args.eval_task} evaluation")

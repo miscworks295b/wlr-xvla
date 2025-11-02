@@ -15,7 +15,12 @@
 # ------------------------------------------------------------------------------
 
 from __future__ import annotations
-
+from json import encoder
+<<<<<<< HEAD
+import random
+=======
+import time
+>>>>>>> c322bf54587969bc1bd9213cf862f80e79fe626f
 from typing import Any, Dict, Tuple
 
 import logging
@@ -29,15 +34,17 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import uvicorn
 from safetensors.torch import load_file
-
+import json_numpy
 from transformers import AutoModelForCausalLM
 from components.transformer import SoftPromptedTransformer
-from components.losses import EE6DLoss, JointLoss
+from components.losses import EE6DLoss, JointLoss, AGIBOTJointLoss, AGIBOTEE6DLoss
 from components.preprocessor import LanguagePreprocessor, ImagePreprocessor
-
+import cv2
 LOSS_HUB = {
     "ee6d": EE6DLoss,
     "joint": JointLoss,
+    "agibot_joint": AGIBOTJointLoss,
+    "cd ": AGIBOTEE6DLoss
 }
 
 
@@ -70,6 +77,8 @@ class XVLA(nn.Module):
         len_soft_prompts: int = 32,
         use_hetero_proj: bool = False,
         action_mode: str = "ee6d",
+        use_proprio: bool = True,
+        version: str = "v1"
     ):
         """
         Parameters
@@ -92,26 +101,27 @@ class XVLA(nn.Module):
             Whether to use heterogeneous projection heads in the transformer.
         action_mode : {"ee6d","joint"}
             Layout for actions/proprio; controls channel dimensions and loss type.
+        use_proprio : bool
+            Whether to use proprio info.
         """
         super().__init__()
 
         action_mode = action_mode.lower()
-        assert action_mode in {"ee6d", "joint"}, "action_mode must be 'ee6d' or 'joint'"
+        self.action_mode = action_mode
+        assert action_mode in LOSS_HUB.keys(), "unknown action_mode"
 
         # Channel layout derived from mode
         self.criterion = LOSS_HUB[action_mode]()
         self.num_actions = num_actions
-
+        self.use_proprio = use_proprio
+        if not use_proprio: print(">>> disable proprioception <<<")
+        
         # Modules
-        assert encoder_name in {
-            "microsoft/Florence-2-base",
-            "microsoft/Florence-2-large",
-        }, "Only microsoft/Florence-2-base and microsoft/Florence-2-large are supported."
+        assert 'Florence' in encoder_name, "Only microsoft/Florence-2-base and microsoft/Florence-2-large are supported."
         self.vlm = AutoModelForCausalLM.from_pretrained(
             encoder_name,
             torch_dtype="auto",
-            trust_remote_code=True,
-            local_files_only=True
+            trust_remote_code=True
         )
         # Remove decoder-specific components to reduce memory and ensure we only
         # use encoder pathways. Guard these in case internals change.
@@ -141,10 +151,9 @@ class XVLA(nn.Module):
 
         # I/O preprocessors (implementations are project-specific)
         self.text_preprocessor = LanguagePreprocessor(encoder_name=encoder_name)
-        self.image_preprocessor = ImagePreprocessor()
-
+        self.image_preprocessor = ImagePreprocessor(version=version)
+        self.version = version
         self.app: FastAPI | None = None
-
 
     # ------------------------------ utilities -------------------------------
     def forward_vlm(
@@ -232,11 +241,16 @@ class XVLA(nn.Module):
         action_m : Tensor
             Action with gripper channels zeroed.
         """
+        
+        if 'agibot' in self.action_mode: 
+            if random.random() < 0.5: return torch.zeros_like(proprio), action
+            else: return proprio, action
         idx = self.criterion.GRIPPER_IDX
         proprio_m = proprio.clone()
         action_m = action.clone()
         proprio_m[..., idx] = 0.0
         action_m[..., idx] = 0.0
+        if not self.use_proprio: proprio_m = torch.zeros_like(proprio_m)
         return proprio_m, action_m
 
     # ------------------------------ training --------------------------------
@@ -328,6 +342,7 @@ class XVLA(nn.Module):
         Tensor, shape [B, T=num_actions, dim_action]
             Predicted action sequence; sigmoid applied only on gripper channels.
         """
+        start_time = time.time()
         self.eval()
         enc = self.forward_vlm(input_ids=input_ids, pixel_values=image_input, image_mask=image_mask)
 
@@ -344,13 +359,17 @@ class XVLA(nn.Module):
             action = self.transformer(
                 domain_id=domain_id,
                 action_with_noise=action_with_noise_m,
-                t=t,
                 proprio=proprio_m,
+                t=t,
                 **enc,
             )
-
         idx = self.criterion.GRIPPER_IDX
+<<<<<<< HEAD
+        if self.action_mode != "agibot_ee6d": action[..., idx] = torch.sigmoid(action[..., idx])
+=======
         action[..., idx] = torch.sigmoid(action[..., idx])
+        print("infer time:", time.time() - start_time)
+>>>>>>> c322bf54587969bc1bd9213cf862f80e79fe626f
         return action
 
     # ------------------------------ minimal service -------------------------
@@ -389,8 +408,11 @@ class XVLA(nn.Module):
                 image_list = []
                 for key in ("image0", "image1", "image2"):
                     if key in payload:
-                        v = payload[key]
-                        if isinstance(v, (list, np.ndarray)):
+                        v = json_numpy.loads(payload[key])
+                        if isinstance(v, np.ndarray) and v.ndim == 1:
+                            v = cv2.imdecode(v, cv2.IMREAD_COLOR)
+                            image_list.append(Image.fromarray(v))
+                        elif isinstance(v, (list, np.ndarray)):
                             image_list.append(Image.fromarray(np.array(v)))
                         else:
                             image_list.append(Image.open(v))
@@ -400,7 +422,7 @@ class XVLA(nn.Module):
                 )
                 image_inputs = self.image_preprocessor(image_list)
 
-                proprio_np = np.asarray(payload["proprio"], dtype=np.float32)
+                proprio_np = np.asarray(json_numpy.loads(payload["proprio"]), dtype=np.float32)
                 domain_id_val = int(payload["domain_id"])
 
                 to_cuda = (lambda t: t.cuda(non_blocking=True)) if torch.cuda.is_available() else (lambda t: t)
@@ -414,7 +436,7 @@ class XVLA(nn.Module):
                 steps = int(payload.get("steps", 10))
                 action = self.generate_actions(
                     input_ids=inputs["input_ids"],
-                    image_input=inputs["pixel_values"],
+                    image_input=inputs["image_input"],
                     image_mask=inputs["image_mask"],
                     domain_id=inputs["domain_id"],
                     proprio=inputs["proprio"],
@@ -446,7 +468,14 @@ class XVLA(nn.Module):
         uvicorn.run(self.app, host=host, port=port)
 
 
-def xvla(device: str = "cuda", pretrained: str | None = None, action_mode = 'ee6d', **kwargs):
+def build_xvla(device: str = "cuda", 
+         num_actions = 30,
+         pretrained: str | None = None, 
+         action_mode = 'ee6d', 
+         use_local_vlm = None, 
+         use_proprio = True,
+         version = "v1",
+         **kwargs):
     """
     Factory for an XVLA preset using Florence-2-large and a deeper transformer.
 
@@ -464,24 +493,37 @@ def xvla(device: str = "cuda", pretrained: str | None = None, action_mode = 'ee6
     nn.Module
         Constructed XVLA model.
     """
+    encoder_name = use_local_vlm if use_local_vlm else "microsoft/Florence-2-large"
     model = XVLA(
-        encoder_name="microsoft/Florence-2-large",
+        encoder_name=encoder_name,
         
         depth=24,
         hidden_size=1024,
         num_heads=16,
-        num_actions=30,
         num_domains=30,
         len_soft_prompts=32,
         use_hetero_proj=False,
         
+        num_actions=num_actions,
         action_mode=action_mode,
+        use_proprio=use_proprio,
+<<<<<<< HEAD
+        version=version
     )
+=======
+        version = version
+    ).to(torch.float32)
+>>>>>>> c322bf54587969bc1bd9213cf862f80e79fe626f
 
     if isinstance(pretrained, str):
         print(f">>>>>> load pretrain from {pretrained}")
         pretrained_ckpt = load_file(pretrained)
-        print(model.load_state_dict(pretrained_ckpt, strict=False))
+        new_ckpt = {}
+        for key, value in pretrained_ckpt.items():
+            if key in model.state_dict() and value.shape == model.state_dict()[key].shape: new_ckpt[key] = value
+            else:  print(f"skip loading {key}, shape not match")
+        
+        print(model.load_state_dict(new_ckpt, strict=False))
 
     if device:
         model = model.to(device)

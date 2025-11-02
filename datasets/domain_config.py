@@ -8,6 +8,20 @@ DATA_WEIGHTS = {
     "AGIBOT": 0.4,
     "robomind-agilex": 0.07,
     "robomind-franka-dual": 0.03,
+    
+    
+    # challenge
+    "agiworld-on-site-pack": 0.8,
+    "agiworld-on-site-pack-extra": 0.2,
+    
+    "agiworld-on-site-conveyor": 0.8,
+    "agiworld-on-site-conveyor-extra": 0.2,
+    
+    "agiworld-on-site-restock": 1.,
+    "agiworld-on-site-pour": 1.,
+    "agiworld-on-site-microwave": 1.2,
+    "agiworld-on-site-cloth": 1.2,
+    "agiworld-on-site-cloth-2": 0.1
 }
 
 DATA_DOMAIN_ID = {
@@ -33,4 +47,17 @@ DATA_DOMAIN_ID = {
     "AGIBOT": 15,
     "robomind-agilex": 16,
     "robomind-franka-dual": 17,
+    
+    # challenge
+    "agiworld-on-site-pack": 0, # 20,
+    "agiworld-on-site-pack-extra": 0, # 20,
+    
+    "agiworld-on-site-conveyor": 0, # 21,
+    "agiworld-on-site-conveyor-extra": 0, #26,
+    
+    "agiworld-on-site-restock": 0, #22,
+    "agiworld-on-site-pour": 0, # 23,
+    "agiworld-on-site-microwave": 0, #24,
+    "agiworld-on-site-cloth": 0, #25,
+    "agiworld-on-site-cloth-2": 0, #27,
 }
