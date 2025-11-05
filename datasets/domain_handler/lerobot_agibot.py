@@ -1,8 +1,24 @@
+# ------------------------------------------------------------------------------
+# Copyright 2025 2toINF (https://github.com/2toINF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
 from __future__ import annotations
 import numpy as np, torch, random
 from mmengine import fileio
 from scipy.interpolate import interp1d
-from datasets.common import read_video_to_frames, read_parquet, quat_to_rotate6d
+from ..utils import read_video_to_frames, read_parquet, quat_to_rotate6d
 from PIL import Image
 from .base import DomainHandler
 
@@ -10,7 +26,7 @@ class AGIBOTLeRobotHandler(DomainHandler):
     dataset_name = "AGIBOT"
 
     def iter_episode(self, traj_idx: int, *, num_actions: int, training: bool,
-                     image_aug, lang_aug_map: dict | None):
+                     image_aug, lang_aug_map: dict | None, **kwargs):
         item = self.meta["datalist"][traj_idx]
         ep = item["episode_index"]; chunk = f"chunk-{ep//1000:03d}"; key = f"episode_{ep:06d}"
 

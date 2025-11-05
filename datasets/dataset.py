@@ -1,3 +1,19 @@
+# ------------------------------------------------------------------------------
+# Copyright 2025 2toINF (https://github.com/2toINF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
 from __future__ import annotations
 from typing import Dict, Iterable, List
 import io, json, random, numpy as np, torch
@@ -5,7 +21,7 @@ from torch.utils.data import IterableDataset
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from mmengine import fileio
-from .common import action_slice
+from .utils import action_slice
 from .domain_config import DATA_WEIGHTS, DATA_DOMAIN_ID
 from .domain_handler.registry import get_handler_cls
 
@@ -27,17 +43,14 @@ class InfiniteDataReader(IterableDataset):
                  num_views: int = 3, 
                  training: bool = True,
                  action_mode: str = "ee6d",
-                 rel_idx: List[int] = [],
                  lang_aug: str = None,
                  ):
         self.num_views = num_views
         self.training = training
         self.num_actions = num_actions
         self.action_mode = action_mode
-        self.rel_idx = rel_idx
         self.metas: Dict[str, dict] = {}
         print("use action mode:", action_mode)
-        print("rel_idx:", rel_idx)
         if fileio.isdir(metas_path):
             meta_files = fileio.list_dir_or_file(metas_path, suffix=".json", recursive=True, list_dir=False)
             root = metas_path
@@ -48,8 +61,7 @@ class InfiniteDataReader(IterableDataset):
             self.metas[meta["dataset_name"]] = meta
 
         self.image_aug = [
-            transforms.Resize((236, 236), interpolation=InterpolationMode.BICUBIC),
-            transforms.RandomCrop(224) if training else transforms.CenterCrop(224),
+            transforms.Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
             transforms.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.2) \
                 if training else transforms.Lambda(lambda x: x),
             transforms.ToTensor(),
@@ -76,13 +88,12 @@ class InfiniteDataReader(IterableDataset):
                     action_mode = self.action_mode
                 ):
                     sample["domain_id"] = torch.tensor(DATA_DOMAIN_ID.get(dataset_name, 0))
-                    rel_idx = meta.get("rel_idx", self.rel_idx)
-                    sample.update(action_slice(sample["abs_trajectory"], rel_idx))
+                    idx_for_delta = meta.get("idx_for_delta", [])
+                    sample.update(action_slice(sample["abs_trajectory"], idx_for_delta))
                     del sample["abs_trajectory"]
                     yield sample
             except Exception as e:
                 with open("error_log.txt", "a") as f: f.write(f"skip broken traj {meta['datalist'][traj_idx]} with {e}\n")
-                # print(f"!!! skip broken traj {meta['datalist'][traj_idx]} with {e}")
                 continue
         if self.training: yield from self._iter_one_dataset(dataset_name)
 

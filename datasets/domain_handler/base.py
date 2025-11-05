@@ -1,4 +1,19 @@
-# datasets/domains/hdf5_base.py
+# ------------------------------------------------------------------------------
+# Copyright 2025 2toINF (https://github.com/2toINF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import io
@@ -88,7 +103,7 @@ class BaseHDF5Handler(DomainHandler):
 
     @staticmethod
     def _pil_from_arr(arr: Any) -> Image.Image:
-        from datasets.common import decode_image_from_bytes
+        from ..utils import decode_image_from_bytes
         return decode_image_from_bytes(arr) if not isinstance(arr, Image.Image) else arr
 
     def iter_episode(
@@ -98,9 +113,7 @@ class BaseHDF5Handler(DomainHandler):
         num_actions: int,
         training: bool,
         image_aug,
-        action_mode,
         lang_aug_map: dict | None,
-        use_gripper_trick:bool = False,
         **kwargs
     ) -> Iterable[dict]:
         """Open once, yield many samples; file is always closed on exit."""

@@ -1,3 +1,19 @@
+# ------------------------------------------------------------------------------
+# Copyright 2025 2toINF (https://github.com/2toINF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------------------------
+
 from __future__ import annotations
 
 DATA_WEIGHTS = {
@@ -10,13 +26,11 @@ DATA_WEIGHTS = {
     "robomind-franka-dual": 0.03,
     
     
-    # challenge
+    # agibot world challenge
     "agiworld-on-site-pack": 0.8,
     "agiworld-on-site-pack-extra": 0.2,
-    
     "agiworld-on-site-conveyor": 0.8,
     "agiworld-on-site-conveyor-extra": 0.2,
-    
     "agiworld-on-site-restock": 1.,
     "agiworld-on-site-pour": 1.,
     "agiworld-on-site-microwave": 1.2,
@@ -25,6 +39,7 @@ DATA_WEIGHTS = {
 }
 
 DATA_DOMAIN_ID = {
+    # ft
     "Bridge": 0,
     "RT1": 1,
     "Calvin": 2,
@@ -48,13 +63,11 @@ DATA_DOMAIN_ID = {
     "robomind-agilex": 16,
     "robomind-franka-dual": 17,
     
-    # challenge
+    # agibot world challenge
     "agiworld-on-site-pack": 0, # 20,
     "agiworld-on-site-pack-extra": 0, # 20,
-    
     "agiworld-on-site-conveyor": 0, # 21,
     "agiworld-on-site-conveyor-extra": 0, #26,
-    
     "agiworld-on-site-restock": 0, #22,
     "agiworld-on-site-pour": 0, # 23,
     "agiworld-on-site-microwave": 0, #24,
