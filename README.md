@@ -263,11 +263,14 @@ accelerate launch \
 If you use X-VLA in your research, please cite:
 
 ```bibtex
-@article{zheng2025x,
-  title={X-VLA: Soft-Prompted Transformer as Scalable Cross-Embodiment Vision-Language-Action Model},
-  author={Zheng, Jinliang and Li, Jianxiong and Wang, Zhihao and Liu, Dongxiu and Kang, Xirui and Feng, Yuchun and Zheng, Yinan and Zou, Jiayin and Chen, Yilun and Zeng, Jia and others},
-  journal={arXiv preprint arXiv:2510.10274},
-  year={2025}
+@misc{zheng2025xvlasoftpromptedtransformerscalable,
+      title={X-VLA: Soft-Prompted Transformer as Scalable Cross-Embodiment Vision-Language-Action Model}, 
+      author={Jinliang Zheng and Jianxiong Li and Zhihao Wang and Dongxiu Liu and Xirui Kang and Yuchun Feng and Yinan Zheng and Jiayin Zou and Yilun Chen and Jia Zeng and Ya-Qin Zhang and Jiangmiao Pang and Jingjing Liu and Tai Wang and Xianyuan Zhan},
+      year={2025},
+      eprint={2510.10274},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2510.10274}, 
 }
 ```
 
