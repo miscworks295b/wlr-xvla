@@ -103,7 +103,7 @@ class InfiniteDataReader(IterableDataset):
         if not self.training: 
             for n in names: yield from self._iter_one_dataset(n)
         else:
-            names = names * 20 # increase the dataset sampling frequency
+            names = names * 5 # increase the dataset sampling frequency
             gens = [iter(self._iter_one_dataset(n)) for n in names]
             ws = [DATA_WEIGHTS.get(n, 1.0) for n in names]
             s = sum(ws); ws = [w / s for w in ws]
