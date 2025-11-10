@@ -1,5 +1,3 @@
-
-from mmengine import fileio
 import io
 import os
 import os.path as osp
@@ -16,8 +14,6 @@ import collections
 import requests
 import argparse
 import json_numpy
-import time
-import subprocess
 
 class LiberoAbsActionProcessor:
     def Rotate6D_to_AxisAngle(self, r6d):
@@ -288,34 +284,21 @@ def eval_libero(agent, save_path, num_episodes=10, init_seed=42, act_type='abs',
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='single-process evaluation on Libero bench')
     parser.add_argument('--task_suites', default=['libero_10', 'libero_spatial', 'libero_goal', 'libero_object'], nargs='+', help='base save path')
-    parser.add_argument('--eval_time', default=50, type=int, help='evaluate episodes')
+    parser.add_argument('--num_episodes', default=50, type=int, help='evaluate episodes')
     parser.add_argument('--init_seed', default=42, type=int, help='base save path')
-    parser.add_argument('--output_dir', type=str, help='base save path')
+    parser.add_argument("--host", default='0.0.0.0', help="Your client host ip")
+    parser.add_argument("--port", type=int, help="Your client port")
+    parser.add_argument('--output_dir',  default='results', type=str, help='base save path')
     args = parser.parse_args()
     kwargs = vars(args)
-    os.makedirs(kwargs['output_dir'], exist_ok=True)
     
-    while True:
-        if not os.path.exists(osp.join(kwargs['output_dir'], 'info.json')):
-            pass
-        else:
-            break
-   
-    time.sleep(5)
-    with open(osp.join(kwargs['output_dir'], 'info.json'), 'r') as f:
-        infos = json.load(f)
-        print(infos)
-        host = infos['host']
-        port = infos['port']
-        job_id = infos['job_id']
-    # os.remove(osp.join(kwargs['output_dir'], 'info.json'))
     print("-"*88)
     print("init seed:", kwargs['init_seed'])
     print("save path:", kwargs['output_dir'])
     print("task suites:", kwargs['task_suites'])
-    print("evaluate episodes:", kwargs['eval_time'])
+    print("evaluate episodes:", kwargs['num_episodes'])
     print("-"*88)
 
-    agent = ClientModel(host=host, port=port)
+    agent = ClientModel(host=kwargs['host'], port=kwargs['port'])
     eval_libero(agent=agent, save_path=kwargs['output_dir'], init_seed=kwargs['init_seed'],
-                    num_episodes=kwargs['eval_time'], task_suites=kwargs['task_suites'], act_type='abs')
+                num_episodes=kwargs['num_episodes'], task_suites=kwargs['task_suites'], act_type='abs')
