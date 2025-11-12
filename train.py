@@ -90,11 +90,7 @@ def get_args_parser():
     parser.add_argument("--freeze_steps", type=int, default=1000)
     parser.add_argument("--warmup_steps", type=int, default=2000)
     parser.add_argument("--use_cosine_decay", action="store_true", default=False)
-<<<<<<< HEAD
-    parser.add_argument("--min_lr_ratio", type=float, default=0.05)
-=======
     parser.add_argument("--min_lr_ratio", type=float, default=0.1)
->>>>>>> 9f0edafb9794d2071eecf15a9f7ade3df9f44206
 
     # Logging / saving
     parser.add_argument("--save_interval", type=int, default=50000)
