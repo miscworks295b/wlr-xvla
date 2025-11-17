@@ -24,10 +24,10 @@ pip install -e .
 
 Run the X-VLA model as an inference server (in a clean environment to avoid dependency conflicts):
 ```bash
+cd X-VLA
 conda activate X-VLA
 python -m deploy \
   --model_path 2toINF/X-VLA-Libero \
-  --host 0.0.0.0 \
   --port 8000
 ```
 
@@ -43,16 +43,9 @@ conda activate libero
 python libero_client.py \
     --task_suites libero_spatial libero_goal libero_object libero_10 \
     --host 0.0.0.0 \
-    --port 12321 \
+    --port 8000 \
 ```
 
 
 ---
 
-## 📊 Results
-
-## 📊 Results
-
-|       |Spatial|Object|Goal|Long|Avg|
-| :--------------------: | :--: | :--: | :--: | :--: | :--: | 
-|     **Success (%)**    | 98.2 | 98.6 | 97.8 | 97.6 | 98.1 |

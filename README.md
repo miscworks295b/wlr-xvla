@@ -49,12 +49,18 @@ This design avoids package conflicts and supports distributed inference across G
 
 #### 🧠 Available Pre-trained Models
 
+- [ ] We observed a slight performance drop (around 1% across different datasets) after converting our models to the HF format, and we’re actively investigating the cause.
+
+#### 🧠 About Libero Setup and Evluation
+
+- [x] For questions about converting relative actions to absolute actions and our implementation, please first refer to issue [#2](https://github.com/2toinf/X-VLA/issues/2) and [#15](https://github.com/2toinf/X-VLA/issues/15). We have updated our [implementation](https://github.com/2toinf/X-VLA/blob/main/evaluation/libero/rel2abs.py) for retrieving absolute EEF actions.
+
 | Model ID                                                                                           | Embodiment        | Description                                                                                     |   Performance   | Evaluation Guidance |
 | :------------------------------------------------------------------------------------------------- | :---------------- | :---------------------------------------------------------------------------------------------- | :--------------: | :-----------------: |
 | [`2toINF/X-VLA-Pt`](https://huggingface.co/2toINF/X-VLA-Pt)                                        | Foundation        | Pretrained on large-scale heterogeneous robot–vision–language datasets for general transfer.     | —                | —                   |
 | [`2toINF/X-VLA-AgiWorld-Challenge`](https://huggingface.co/2toINF/X-VLA-AgiWorld-Challenge)        | Agibot-G1          | Fine-tuned for AgiWorld Challenge.       | **Champion🥇**        | -  |
-| [`2toINF/X-VLA-Calvin-ABC_D`](https://huggingface.co/2toINF/X-VLA-Calvin-ABC_D)                    | Franka     | Fine-tuned on CALVIN benchmark (ABC_D subset)              | **4.41**        | [Calvin Eval](evaluation/calvin/README.md)          |
-| [`2toINF/X-VLA-Google-Robot`](https://huggingface.co/2toINF/X-VLA-Google-Robot)                    | Google Robot      |  Fine-tuned on large-scale Google Robot dataset                | **80.4%(VM) 75.7%(VA)**        | [Simpler Eval](evaluation/simpler/README.md)   |
+| [`2toINF/X-VLA-Calvin-ABC_D`](https://huggingface.co/2toINF/X-VLA-Calvin-ABC_D)                    | Franka     | Fine-tuned on CALVIN benchmark (ABC_D subset)              | **4.43**        | [Calvin Eval](evaluation/calvin/README.md)          |
+| [`2toINF/X-VLA-Google-Robot`](https://huggingface.co/2toINF/X-VLA-Google-Robot)                    | Google Robot      |  Fine-tuned on large-scale Google Robot dataset                | **80.4%(VM) 75.7%(VA)**        | to be update   |
 | [`2toINF/X-VLA-Libero`](https://huggingface.co/2toINF/X-VLA-Libero)                                | Franka            | Fine-tuned on LIBERO benchmark                     | **98.1%**        | [LIBERO Eval](evaluation/libero/README.md)         |
 | [`2toINF/X-VLA-VLABench`](https://huggingface.co/2toINF/X-VLA-VLABench)                                | Franka            | Fine-tuned on VLABench benchmark                     | **51.1(score)**        | to be update         |
 | [`2toINF/X-VLA-RoboTwin2`](https://huggingface.co/2toINF/X-VLA-RoboTwin2)                          | Agilex        | Trained on RoboTwin2 dataset for dual-arm coordinated manipulation(50 demos for each task).                     | **70%**        |   [RoboTwin2.0 Eval](evaluation/robotwin-2.0/README.md)    |
@@ -94,7 +100,7 @@ model.run(processor, host="0.0.0.0", port=8000)
 Once launched, the API endpoint is available at:
 
 ```
-POST http://<server_ip>:8000/infer
+POST http://<server_ip>:8000/act
 ```
 
 ---
@@ -112,7 +118,7 @@ The client communicates via HTTP POST, sending multimodal data (vision + languag
 | `image0`               | `json_numpy.dumps(array)` | Primary camera image (RGB).                           |
 | `image1`, `image2`     | *optional*                | Additional camera views if applicable.                |
 | `domain_id`            | `int`                     | Identifier for the current robotic embodiment/domain. |
-| `steps`                | `int`                     | Number of action steps to predict (e.g., 10).         |
+| `steps`                | `int`                     | denoising steps for flow-matching based generation (e.g., 10).         |
 
 #### Example Client Code
 
@@ -121,7 +127,7 @@ import requests
 import numpy as np
 import json_numpy
 
-server_url = "http://localhost:8000/infer"
+server_url = "http://localhost:8000/act"
 timeout = 5
 
 # Prepare inputs
@@ -145,7 +151,7 @@ try:
     print(f"✅ Received {actions.shape[0]} predicted actions.")
 except Exception as e:
     print(f"⚠️ Request failed: {e}")
-    actions = np.zeros((10, 20), dtype=np.float32)
+    actions = np.zeros((30, 20), dtype=np.float32)
 ```
 
 #### Expected Output
@@ -154,7 +160,7 @@ except Exception as e:
 [Server] Model loaded successfully on cuda:0
 [Server] Listening on 0.0.0.0:8000
 [Client] Sending observation to server...
-✅ Received 10 predicted actions.
+✅ Received 30 predicted actions.
 ```
 
 ---

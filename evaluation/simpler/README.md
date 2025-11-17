@@ -8,8 +8,12 @@ The evaluation follows [SimplerEnv](https://github.com/255isWhite/SimplerEnv), w
 
 ### 1️⃣ Environment Setup
 ```bash
-git clone https://github.com/255isWhite/SimplerEnv.git
-cd SimplerEnv
+# Make sure X-VLA has been correctly installed before this
+conda activate XVLA
+git clone https://github.com/255isWhite/SimplerEnv.git --recurse-submodules
+cd SimplerEnv/ManiSkill2_real2sim
+pip install -e .
+cd ..
 pip install -e .
 ```
 
@@ -20,19 +24,12 @@ pip install -e .
 ### 2️⃣ Launch X-VLA Server
 
 ```bash
-python -m x_vla.deploy \
+# First terminal
+cd X-VLA
+python deploy.py \
     --model_path 2toINF/X-VLA-WidowX \
     --host 0.0.0.0 \
     --port 8000
-```
-
-or via Python:
-
-```python
-from transformers import AutoModel, AutoProcessor
-model = AutoModel.from_pretrained("2toINF/X-VLA-WidowX", trust_remote_code=True)
-processor = AutoProcessor.from_pretrained("2toINF/X-VLA-WidowX", trust_remote_code=True)
-model.run(processor, host="0.0.0.0", port=8000)
 ```
 
 ---
@@ -40,7 +37,8 @@ model.run(processor, host="0.0.0.0", port=8000)
 ### 3️⃣ Run Client Evaluation
 
 ```bash
-cd evaluation/simpler/WidowX
+# Second terminal
+cd X-VLA/evaluation/simpler/WidowX
 python client.py --server_ip 127.0.0.1 --server_port 8000
 ```
 
