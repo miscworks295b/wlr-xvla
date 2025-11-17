@@ -35,14 +35,14 @@ class CalvinHandler(BaseHDF5Handler):
         freq, qdur = 30.0, 1.0
         proprio = f["proprio"][()]  # [T,7]
         left = np.concatenate(
-            [proprio[:, :3], euler_to_rotate6d(proprio[:, 3:6], "xyz"), proprio[:, -1:]],
+            [proprio[:, :3], euler_to_rotate6d(proprio[:, 3:6], "xyz"), proprio[:, -1:] < 0.],
             axis=-1,
         )  # [T,10]
         right = np.zeros_like(left)
         return left, right, None, None, freq, qdur
 
     def index_candidates(self, T_left: int, training: bool) -> Iterable[int]:
-        return range(0, max(0, T_left - 15))
+        return range(0, max(0, T_left - 20))
 
 
 # --------------------------------- RT1 ---------------------------------------
@@ -53,7 +53,7 @@ class RT1Handler(BaseHDF5Handler):
     def build_left_right(
         self, f: h5py.File
     ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray], float, float]:
-        freq, qdur = 3.0, 5.0
+        freq, qdur = 3.0, 10.0
         eefq = f["eef_quat_orientation"][()]  # [T,7] pos3 + quat4
         grip = f["gripper"][()]               # [T,1] or [T]
         if grip.ndim == 1:

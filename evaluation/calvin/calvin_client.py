@@ -38,7 +38,7 @@ from calvin_env.envs.play_table_env import get_env
 # --------------------------
 # Global Configs
 # --------------------------
-EP_LEN = 720
+EP_LEN = 360
 NUM_SEQUENCES = 1000
 
 
@@ -90,12 +90,12 @@ class ClientModel(CalvinBaseModel):
                 "image0": json_numpy.dumps(main_view),
                 "image1": json_numpy.dumps(wrist_view),
                 "domain_id": 2,
-                "steps": 10
+                "steps": 5
             }
             try:
                 response = requests.post(self.url, json=payload, timeout=10)
                 response.raise_for_status()
-                self.action_plan = response.json()["action"][:25]
+                self.action_plan = response.json()["action"][:15]
             except Exception as e:
                 print(f"⚠️ Server request failed: {e}")
                 return np.zeros(3), np.array([0, 0, 0, 1]), -1
@@ -104,7 +104,7 @@ class ClientModel(CalvinBaseModel):
         return (
             action_predict[:3],
             rotate6D_to_quat(action_predict[3:9]),
-            1 if action_predict[9] < 0.8 else -1
+            1 if action_predict[9] < 0.7 else -1
         )
 
 
@@ -138,9 +138,10 @@ def evaluate_policy(model, env, output_dir, debug=False):
 def evaluate_sequence(env, model, oracle, init_state, seq, annotations, plans, debug, output_dir):
     robot_obs, scene_obs = get_env_state_for_initial_condition(init_state)
     env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
-    model.reset(env.get_obs())
+    # model.reset(env.get_obs())
     success = 0
     for subtask in seq:
+        model.reset(env.get_obs())
         ok, imgs, lang = rollout(env, model, oracle, subtask, annotations, plans, debug)
         save_video(f"{output_dir}/{lang}_{ok}.mp4", imgs)
         if ok:

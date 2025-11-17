@@ -32,6 +32,9 @@ from accelerate import Accelerator
 from datasets import create_dataloader
 from models.modeling_xvla import XVLA
 from models.processing_xvla import XVLAProcessor
+from peft import LoraConfig, get_peft_model
+
+
 
 import logging
 import os
@@ -190,6 +193,20 @@ def main(args):
 
     # Load model & processor
     model = XVLA.from_pretrained(args.models)
+    
+    lora_config = LoraConfig(
+        lora_alpha=16,
+        r=8,
+        bias="none",
+        target_modules="all-linear",
+        modules_to_save=["transformer.soft_prompt_hub", 
+                         "transformer.action_encoder", 
+                         "transformer.action_decoder"],
+    )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+    
+    
     processor = XVLAProcessor.from_pretrained(args.models)
 
     # Iterable dataloader (don't wrap with prepare)
@@ -211,10 +228,13 @@ def main(args):
     )
     model, optim = accelerator.prepare(model, optim)
 
+
     # Training loop
     model.train()
     global_step, t0 = 0, time.time()
     logger.info(f"🚀 Start training for {args.iters} iterations | world_size={accelerator.num_processes}")
+    
+    
     
     for batch in train_dataloader:
         # Encode language
@@ -260,6 +280,7 @@ def main(args):
                 accelerator.unwrap_model(model).save_pretrained(save_dir, safe_serialization=True)
                 with open(os.path.join(save_dir, "state.json"), "w") as f:
                     json.dump({"global_step": global_step}, f)
+        
         if global_step >= args.iters: break
 
     accelerator.end_training()

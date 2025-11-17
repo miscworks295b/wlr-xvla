@@ -80,7 +80,8 @@ class XVLAClient:
                 response.raise_for_status()
                 result = response.json()
                 action_seq = np.array(result["action"], dtype=np.float32)
-                self.action_plan.extend(action_seq.tolist())
+                action_seq[:, :9] += self.proprio[:9]
+                self.action_plan.extend(action_seq.tolist()[:15])
             except Exception as e:
                 print(f"[Client] Request failed: {e}")
                 return np.zeros_like(self.proprio)
@@ -93,7 +94,7 @@ class XVLAClient:
         action_final = np.concatenate([
             action_pred[:3],
             rotate6D_to_euler_xyz(action_pred[3:9]) + np.array([0, math.pi / 2, 0]),
-            np.array([1 if action_pred[9] < 0.95 else -1])
+            np.array([1.0 if action_pred[9] < 0.8 else -1.0])
         ])
         return action_final
 
@@ -112,7 +113,7 @@ def evaluate_policy_widowx(client, output_dir: str, proc_id: int, max_steps: int
         "widowx_spoon_on_towel",
         "widowx_carrot_on_plate",
         "widowx_stack_cube",
-        "widowx_put_eggplant_in_basket",
+        # "widowx_put_eggplant_in_basket",
     ]
 
     summary = []

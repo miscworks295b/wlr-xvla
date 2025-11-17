@@ -68,8 +68,6 @@ class InfiniteDataReader(IterableDataset):
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225), inplace=True),
         ]
         self.image_aug = transforms.Compose(self.image_aug)
-        if lang_aug is not None: self.lang_aug = json.load(open(lang_aug, "r")) # support json or jsonl
-        else: self.lang_aug = None
 
     def _iter_one_dataset(self, dataset_name: str) -> Iterable[dict]:
         meta = self.metas[dataset_name]
@@ -79,12 +77,13 @@ class InfiniteDataReader(IterableDataset):
         handler = Handler(meta=meta, num_views=self.num_views)
         for traj_idx in traj_indices:
             try:
+                
                 for sample in handler.iter_episode(
                     traj_idx,
                     num_actions=self.num_actions,
                     training=self.training,
                     image_aug=self.image_aug,
-                    lang_aug_map=self.lang_aug,
+                    lang_aug_map= meta["lang_aug_map"] if "lang_aug_map" in meta.keys() else None,
                     action_mode = self.action_mode
                 ):
                     sample["domain_id"] = torch.tensor(DATA_DOMAIN_ID.get(dataset_name, 0))
@@ -103,7 +102,7 @@ class InfiniteDataReader(IterableDataset):
         if not self.training: 
             for n in names: yield from self._iter_one_dataset(n)
         else:
-            names = names * 5 # increase the dataset sampling frequency
+            #names = names * 2 # increase the dataset sampling frequency
             gens = [iter(self._iter_one_dataset(n)) for n in names]
             ws = [DATA_WEIGHTS.get(n, 1.0) for n in names]
             s = sum(ws); ws = [w / s for w in ws]

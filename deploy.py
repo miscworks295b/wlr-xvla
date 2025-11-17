@@ -27,6 +27,8 @@ def main():
     parser = argparse.ArgumentParser(description="Launch XVLA inference FastAPI server")
     parser.add_argument("--model_path", type=str, required=True,
                         help="Path to the pretrained XVLA model directory")
+    parser.add_argument('--processor_path', type=str, default=None)
+    parser.add_argument('--LoRA_path', type=str, default=None)
     parser.add_argument("--output_dir", type=str, default="./logs",
                         help="Directory to save runtime info (info.json)")
     parser.add_argument("--device", type=str, default="cuda",
@@ -60,7 +62,8 @@ def main():
     processor = None
     try:
         print("\n🧩 Loading XVLAProcessor...")
-        processor =  XVLAProcessor.from_pretrained(args.model_path, trust_remote_code=True)
+        processor_path = args.processor_path if args.processor_path else args.model_path
+        processor =  XVLAProcessor.from_pretrained(processor_path)
         print("✅ XVLAProcessor loaded successfully.")
     except Exception as e:
         print(f"⚠️ No processor found or failed to load: {e}")
@@ -75,6 +78,19 @@ def main():
             trust_remote_code=True,
             torch_dtype=torch.float32
         ).to(device).to(torch.float32)
+        
+        if args.LoRA_path is not None:
+            print(f"🔸 Applying LoRA weights from {args.LoRA_path} ...")
+            from peft import PeftModel
+            model = PeftModel.from_pretrained(
+                model,
+                args.LoRA_path,
+                torch_dtype=torch.float32,
+            ).to(device)
+            
+            print("✅ LoRA weights applied successfully.")
+            
+            
         print("✅ Model successfully loaded and moved to device.")
     except Exception as e:
         print(f"❌ Failed to load model: {e}")
