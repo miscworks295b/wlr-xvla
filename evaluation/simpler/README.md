@@ -1,6 +1,6 @@
-# 🧪 Evaluation on Simpler-WidowX
+# 🧪 Evaluation on SIMPLER Benchmark
 
-We evaluate **X-VLA** on the **Simpler benchmark**, covering both **WidowX** and **Google Robot** embodiments.  
+We evaluate **X-VLA** on the **SIMPLER benchmark**, covering both **WidowX** and **Google Robot** embodiments.  
 The evaluation follows [SimplerEnv](https://github.com/255isWhite/SimplerEnv), with **minor environment modifications** to support **absolute end-effector (EE) control** — details can be found in our GitHub commit history.
 ---
 
