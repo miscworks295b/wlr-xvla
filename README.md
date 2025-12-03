@@ -2,14 +2,25 @@
 
 # 🤖 X-VLA: Soft-Prompted Transformer as a Scalable Cross-Embodiment Vision-Language-Action Model
 
-### 🏅Champion @ AgiBot World Challenge @ IROS 2025
+| 📄 **Paper** | 🌐 **Project Page** | 🤗 **Hugging Face** |
+| :---: | :---: | :---: |
+| [Read the Full Research](https://arxiv.org/pdf/2510.10274) | [Explore the Demos](https://thu-air-dream.github.io/X-VLA/) | [Access Models & Datasets](https://huggingface.co/collections/2toINF/x-vla) |
+
+
+## 🏆 Highlights & News
+
+### 🚀 Now Supported in LeRobot! 
+X-VLA is natively integrated into the [LeRobot platform](https://huggingface.co/docs/lerobot/xvla). Give it a try! We sincerely appreciate the support and effort from the Hugging Face team.
+    
+### 🥇 Champion Winner of the AgiBot World Challenge at IROS 2025.
+
+
+
+
 
 **X-VLA** (Cross-Embodiment Vision-Language-Action) model introduces a unified **soft-prompted Transformer** architecture that achieves **scalable and generalizable control** across heterogeneous robotic embodiments.  
 By **decoupling the core policy model from embodiment-specific details**, X-VLA enables robust, high-performance deployment in both simulation and real-world robotic systems.
 
-| 📄 **Paper** | 🌐 **Project Page** | 🤗 **Hugging Face** |
-| :---: | :---: | :---: |
-| [Read the Full Research](https://arxiv.org/pdf/2510.10274) | [Explore the Demos](https://thu-air-dream.github.io/X-VLA/) | [Access Models & Datasets](https://huggingface.co/collections/2toINF/x-vla) |
 
 ---
 
