@@ -42,8 +42,8 @@ cd evaluation/libero
 conda activate libero
 python libero_client.py \
     --task_suites libero_spatial libero_goal libero_object libero_10 \
-    --host 0.0.0.0 \
-    --port 8000 \
+    --server_ip 0.0.0.0 \
+    --server_port 8000
 ```
 
 
