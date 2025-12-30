@@ -36,6 +36,7 @@ from models.processing_xvla import XVLAProcessor
 import logging
 import os
 import sys
+import psutil
 
 # ============================================================
 # logger
@@ -244,11 +245,15 @@ def main(args):
             if accelerator.is_main_process:
                 dt = (time.time() - t0) / args.log_interval
                 t0 = time.time()
+                cpu_mem = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+                gpu_mem = torch.cuda.memory_allocated() / 1024**2
                 logger.info(
                     f"[{global_step}/{args.iters}] "
                     f"loss={logs['loss_total']:.4f} "
                     f"lr_core={logs['lr_transformer_core']:.2e} "
-                    f"lr_vlm={logs['lr_vlm']:.2e} ({dt:.2f}s/it)"
+                    f"lr_vlm={logs['lr_vlm']:.2e} ({dt:.2f}s/it) "
+                    f"USED_CPU={cpu_mem:.2e} MB "
+                    f"USED_GPU={gpu_mem:.2e} MB "
                 )
         
         # Checkpointing

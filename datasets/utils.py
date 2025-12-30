@@ -35,6 +35,7 @@ def read_video_to_frames(path: str) -> np.ndarray:
     frames = []
     for packet in container.demux(video=0):
         for f in packet.decode(): frames.append(f.to_ndarray(format="rgb24"))
+    container.close()
     return np.stack(frames, axis=0)
 
 def read_parquet(path: str) -> dict:
@@ -86,7 +87,10 @@ def rotate6d_to_quat(v6: np.ndarray, scalar_first = False) -> np.ndarray:
     return R.from_matrix(rot_mats).as_quat(scalar_first = scalar_first)
 
 
-def action_slice(abs_traj: torch.Tensor, idx_for_delta: Sequence[int] = ()) -> Dict[str, torch.Tensor]:
+def action_slice(abs_traj: torch.Tensor, 
+                 idx_for_delta: Sequence[int] = (),
+                 idx_for_mask_proprio: Sequence[int] = ()
+                ) -> Dict[str, torch.Tensor]:
     if not isinstance(abs_traj, torch.Tensor):
         raise TypeError("abs_traj must be a torch.Tensor")
     if abs_traj.ndim != 2 or abs_traj.size(0) < 2:
@@ -98,4 +102,7 @@ def action_slice(abs_traj: torch.Tensor, idx_for_delta: Sequence[int] = ()) -> D
     if idx_for_delta:
         idx = torch.as_tensor(idx_for_delta, dtype=torch.long, device=abs_traj.device)
         action[:, idx] -= proprio[idx]
+    if idx_for_mask_proprio:
+        idx = torch.as_tensor(idx_for_mask_proprio, dtype=torch.long, device=abs_traj.device)
+        proprio[idx] = 0.0
     return {"proprio": proprio, "action": action}

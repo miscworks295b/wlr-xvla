@@ -25,9 +25,14 @@ from .robomind import RobomindHandler
 from .droid import DroidHandler
 from .real_world import AIRAgilexHandler, AIRAgilexHQHandler, AIRBotHandler, WidowxAirHandler
 from .simulations import BridgeHandler, LiberoHandler, VLABenchHandler, RobotWin2Handler, RobocasaHumanHandler, CalvinHandler, RT1Handler
+from .lerobotv21 import LeRobotV21Handler
 
 # 1) Exact registry only (no heuristics)
 _REGISTRY: Dict[str, Type[DomainHandler]] = {
+    
+    # Lerobot (v2.1 - sim)
+    "lift2": LeRobotV21Handler,
+    
     # LeRobot (parquet)
     "AGIBOT": AGIBOTLeRobotHandler,
     "AGIBOT-challenge": AGIBOTLeRobotHandler,

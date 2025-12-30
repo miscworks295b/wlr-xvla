@@ -57,7 +57,14 @@ class XVLA(PreTrainedModel):
         self.use_proprio: bool = config.use_proprio
         self.action_mode: str = config.action_mode.lower()
         # Action space (dimensions + hooks)
-        self.action_space = build_action_space(config.action_mode.lower())
+        if config.action_mode.lower() == "auto":
+            self.action_space = build_action_space(
+                config.action_mode.lower(),
+                real_dim=config.real_action_dim,
+                max_dim=config.max_action_dim,
+            )
+        else:
+            self.action_space = build_action_space(config.action_mode.lower())
         dim_action = self.action_space.dim_action
         dim_proprio = getattr(self.action_space, "dim_proprio", dim_action)
 

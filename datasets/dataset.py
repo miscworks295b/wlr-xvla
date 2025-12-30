@@ -55,10 +55,23 @@ class InfiniteDataReader(IterableDataset):
             meta_files = fileio.list_dir_or_file(metas_path, suffix=".json", recursive=True, list_dir=False)
             root = metas_path
         else: meta_files, root = [metas_path], ""
+        
         for file in meta_files:
-            with io.BytesIO(fileio.get(fileio.join_path(root, file))) as f: meta = json.load(f)
-            print(f"== dataset {meta['dataset_name']} with {len(meta['datalist'])} trajs")
-            self.metas[meta["dataset_name"]] = meta
+            file_path = fileio.join_path(root, file)
+            with io.BytesIO(fileio.get(file_path)) as f: meta = json.load(f)
+            ### General Style
+            if 'dataset_name' in meta.keys() and 'datalist' in meta.keys():
+                print(f"== dataset {meta['dataset_name']} with {len(meta['datalist'])} trajs")
+                self.metas[meta["dataset_name"]] = meta
+            ### Lerobot v2.1 style
+            elif "codebase_version" in meta.keys() and meta["codebase_version"] == 'v2.1':
+                meta['datalist'] = []
+                if "root_path" not in meta.keys(): meta['root_path'] = "/".join(file_path.split("/")[:-2])
+                with io.BytesIO(fileio.get(fileio.join_path("/".join(file_path.split("/")[:-1]), "episodes.jsonl"))) as f:
+                    for line in f: meta['datalist'].append(json.loads(line.decode("utf-8")))
+                self.metas[meta['root_path']] = meta
+                print(f"== lerobot dataset {meta['robot_type']} with {meta['total_episodes']} trajs at {meta['root_path']}====")
+            else: raise NotImplementedError(f"unrecognized meta file format: {file}")
 
         self.image_aug = [
             transforms.Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
@@ -73,10 +86,13 @@ class InfiniteDataReader(IterableDataset):
         meta = self.metas[dataset_name]
         traj_indices = list(range(len(meta["datalist"])))
         if self.training: random.shuffle(traj_indices)
-        Handler = get_handler_cls(dataset_name)
+        
+        if 'robot_type' in meta.keys(): robot_type = meta['robot_type']
+        else: robot_type = dataset_name
+        Handler = get_handler_cls(robot_type)
         handler = Handler(meta=meta, num_views=self.num_views)
         for traj_idx in traj_indices:
-            try:
+            # try:
                 
                 for sample in handler.iter_episode(
                     traj_idx,
@@ -86,14 +102,15 @@ class InfiniteDataReader(IterableDataset):
                     lang_aug_map= meta["lang_aug_map"] if "lang_aug_map" in meta.keys() else None,
                     action_mode = self.action_mode
                 ):
-                    sample["domain_id"] = torch.tensor(DATA_DOMAIN_ID.get(dataset_name, 0))
-                    idx_for_delta = meta.get("idx_for_delta", [])
-                    sample.update(action_slice(sample["abs_trajectory"], idx_for_delta))
+                    sample["domain_id"] = torch.tensor(DATA_DOMAIN_ID.get(robot_type, 0))
+                    idx_for_delta = sample.get("idx_for_delta", [])
+                    idx_for_mask_proprio = sample.get("idx_for_mask_proprio", [])
+                    sample.update(action_slice(sample["abs_trajectory"], idx_for_delta, idx_for_mask_proprio))
                     del sample["abs_trajectory"]
-                    yield sample
-            except Exception as e:
-                with open("error_log.txt", "a") as f: f.write(f"skip broken traj {meta['datalist'][traj_idx]} with {e}\n")
-                continue
+                    yield sample 
+            # except Exception as e:
+            #     with open("error_log.txt", "a") as f: f.write(f"skip broken traj {meta['datalist'][traj_idx]} with {e}\n")
+            #     continue
         if self.training: yield from self._iter_one_dataset(dataset_name)
 
 

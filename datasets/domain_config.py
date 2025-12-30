@@ -73,4 +73,8 @@ DATA_DOMAIN_ID = {
     "agiworld-on-site-microwave": 0, #24,
     "agiworld-on-site-cloth": 0, #25,
     "agiworld-on-site-cloth-2": 0, #27,
+    
+    
+    # lerobot-sim
+    "lift2": 0,
 }

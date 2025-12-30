@@ -261,6 +261,92 @@ class AGIBOTEE6DActionSpace(BaseActionSpace):
         return action
 
 
+
+
+
+@register_action("auto")
+class AutoActionSpace(BaseActionSpace):
+    """
+    Auto-detecting action space that adapts to any action dimension.
+
+    - Model outputs max_dim for compatibility with pretrained models
+    - Loss is computed only on the first real_dim dimensions
+    - Postprocess trims output back to real_dim
+
+    Args:
+        real_dim: The actual action dimension from the dataset/policy feature
+        max_dim: The model's output dimension for pretrained VLA compatibility
+    """
+
+    JOINTS_SCALE = 100.0
+
+    def __init__(self, real_dim: int, max_dim: int = 20):
+        super().__init__()
+        self.real_dim = real_dim
+        self.dim_action = max_dim  # Model-facing dimension
+        self.mse = nn.MSELoss()
+
+    def _pad_to_model_dim(self, x: torch.Tensor) -> torch.Tensor:
+        """Pad real_dim → max_dim (zeros for the dummy channels)."""
+        if x is None:
+            return None
+        if x.size(-1) == self.dim_action:
+            return x
+        if x.size(-1) != self.real_dim:
+            # If dimension doesn't match either, pad/trim to real_dim first
+            if x.size(-1) < self.real_dim:
+                pad_shape = list(x.shape[:-1]) + [self.real_dim - x.size(-1)]
+                pad = x.new_zeros(pad_shape)
+                x = torch.cat([x, pad], dim=-1)
+            else:
+                x = x[..., : self.real_dim]
+
+        pad_shape = list(x.shape[:-1]) + [self.dim_action - self.real_dim]
+        pad = x.new_zeros(pad_shape)
+        return torch.cat([x, pad], dim=-1)
+
+    def _trim_to_real_dim(self, x: torch.Tensor) -> torch.Tensor:
+        """Trim model output max_dim → real_dim."""
+        return x[..., : self.real_dim]
+
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Compute loss only on the first real_dim dimensions.
+
+        pred:   [B, T, max_dim] from the model
+        target: [B, T, real_dim] or [B, T, max_dim]
+
+        Loss = MSE(pred[:,:,:real_dim], target[:,:,:real_dim])
+        """
+        pred = self._pad_to_model_dim(pred)
+        target = self._pad_to_model_dim(target)
+        assert pred.shape == target.shape, f"Shape mismatch: pred {pred.shape} vs target {target.shape}"
+
+        # only compute loss on the real dimensions
+        joints_loss = (
+            self.mse(
+                pred[:, :, : self.real_dim],
+                target[:, :, : self.real_dim],
+            )
+            * self.JOINTS_SCALE
+        )
+
+        return {"joints_loss": joints_loss}
+
+    def preprocess(self, proprio: torch.Tensor, action: torch.Tensor, mode: str = "train"):
+        """
+        Pad action from real_dim to max_dim for the model.
+        """
+        return proprio, self._pad_to_model_dim(action)
+
+    def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """
+        Trim model output from max_dim to real_dim for real robot control.
+        """
+        return self._trim_to_real_dim(action)
+
+
+
 # =============================================================================
 # Exports
 # =============================================================================
@@ -271,5 +357,6 @@ __all__ = [
     "EE6DActionSpace",
     "JointActionSpace",
     "AGIBOTEE6DActionSpace",
+    "AutoActionSpace",
     "ACTION_REGISTRY",
 ]
