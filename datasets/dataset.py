@@ -103,11 +103,10 @@ class InfiniteDataReader(IterableDataset):
                     action_mode = self.action_mode
                 ):
                     sample["domain_id"] = torch.tensor(DATA_DOMAIN_ID.get(robot_type, 0))
-                    idx_for_delta = sample.get("idx_for_delta", [])
-                    idx_for_mask_proprio = sample.get("idx_for_mask_proprio", [])
-                    sample.update(action_slice(sample["abs_trajectory"], idx_for_delta, idx_for_mask_proprio))
-                    del sample["abs_trajectory"]
-                    yield sample 
+                    idx_for_delta = sample.pop("idx_for_delta", [])
+                    idx_for_mask_proprio = sample.pop("idx_for_mask_proprio", [])
+                    sample.update(action_slice(sample.pop("abs_trajectory", None), idx_for_delta, idx_for_mask_proprio))
+                    yield sample
             # except Exception as e:
             #     with open("error_log.txt", "a") as f: f.write(f"skip broken traj {meta['datalist'][traj_idx]} with {e}\n")
             #     continue
