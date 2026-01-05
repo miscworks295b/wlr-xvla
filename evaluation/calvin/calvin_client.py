@@ -4,6 +4,7 @@
 # Refined client structure, compatible with X-VLA server
 # ------------------------------------------------------------
 import argparse
+from ast import parse
 import json
 import os
 import sys
@@ -38,7 +39,7 @@ from calvin_env.envs.play_table_env import get_env
 # --------------------------
 # Global Configs
 # --------------------------
-EP_LEN = 360
+EP_LEN = 720
 NUM_SEQUENCES = 1000
 
 
@@ -76,7 +77,7 @@ class ClientModel(CalvinBaseModel):
         self.proprio = np.concatenate([
             obs["robot_obs"][:3],
             euler_xyz_to_rotate6D(obs["robot_obs"][3:6]),
-            obs["robot_obs"][-1:] < 0.5
+            obs['robot_obs'][-1:] > 0.
         ])
         self.proprio = np.concatenate([self.proprio, np.zeros_like(self.proprio)])
 
@@ -90,58 +91,52 @@ class ClientModel(CalvinBaseModel):
                 "image0": json_numpy.dumps(main_view),
                 "image1": json_numpy.dumps(wrist_view),
                 "domain_id": 2,
-                "steps": 5
+                "steps": 10
             }
-            try:
-                response = requests.post(self.url, json=payload, timeout=10)
-                response.raise_for_status()
-                self.action_plan = response.json()["action"][:15]
-            except Exception as e:
-                print(f"⚠️ Server request failed: {e}")
-                return np.zeros(3), np.array([0, 0, 0, 1]), -1
+            # try:
+            response = requests.post(self.url, json=payload, timeout=10)
+            response.raise_for_status()
+            self.action_plan = response.json()["action"][:20]
+            # except Exception as e:
+            #     print(f"⚠️ Server request failed: {e}")
+            #     return np.zeros(3), np.array([0, 0, 0, 1]), -1
         action_predict = np.array(self.action_plan.pop(0))
         self.proprio[:10] = action_predict[:10]
         return (
             action_predict[:3],
             rotate6D_to_quat(action_predict[3:9]),
-            1 if action_predict[9] < 0.7 else -1
+            1 if action_predict[9] < 0.8 else -1
         )
 
 
 # --------------------------
 # Evaluation Functions
 # --------------------------
-def evaluate_policy(model, env, output_dir, debug=False):
+def evaluate_policy(model, env, output_dir, debug=False, eval_start=0, eval_end=NUM_SEQUENCES):
     conf_dir = Path("ABC_D/validation")
     task_cfg = OmegaConf.load(conf_dir / "new_playtable_tasks.yaml")
     task_oracle = hydra.utils.instantiate(task_cfg)
     val_annotations = OmegaConf.load(conf_dir / "new_playtable_validation.yaml")
-    eval_sequences = tqdm(get_sequences(NUM_SEQUENCES), desc="Evaluating CALVIN")
+    eval_sequences = list(get_sequences(NUM_SEQUENCES))
 
     results = []
     plans = defaultdict(list)
-
-    for init_state, seq in eval_sequences:
+    for idx in range(eval_start, eval_end):
+        init_state, seq = eval_sequences[idx]
         r = evaluate_sequence(env, model, task_oracle, init_state, seq, val_annotations, plans, debug, output_dir)
         results.append(r)
-        eval_sequences.set_description(
-            " ".join([f"{i+1}/5: {v*100:.1f}%" for i, v in enumerate(count_success(results))])
-        )
         with open(f"{output_dir}/log.txt", 'a+') as f:
             list_r = count_success(results)
             list_r.append(sum(list_r))
-            print(" ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(list_r)]) + "|", file=f)
-
+            print(f"{idx}: " ," ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(list_r)]) + "|", file=f)
     return results
-
 
 def evaluate_sequence(env, model, oracle, init_state, seq, annotations, plans, debug, output_dir):
     robot_obs, scene_obs = get_env_state_for_initial_condition(init_state)
     env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
-    # model.reset(env.get_obs())
+    model.reset(env.get_obs())
     success = 0
     for subtask in seq:
-        model.reset(env.get_obs())
         ok, imgs, lang = rollout(env, model, oracle, subtask, annotations, plans, debug)
         save_video(f"{output_dir}/{lang}_{ok}.mp4", imgs)
         if ok:
@@ -189,6 +184,8 @@ def main():
                         help="Manual server port (if not using connection_info)")
     parser.add_argument("--output_dir", type=str, default="logs/",
                         help="Directory for saving evaluation videos and logs")
+    parser.add_argument("--eval_start", type=int, default=0)
+    parser.add_argument("--eval_end", type=int, default=1000)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -229,7 +226,7 @@ def main():
     # --------------------------------------------------
     model = ClientModel(host, port)
     print(f"🎯 Starting CALVIN evaluation, saving to {args.output_dir}")
-    evaluate_policy(model, env, args.output_dir)
+    evaluate_policy(model, env, args.output_dir, debug=False, eval_start=args.eval_start, eval_end=args.eval_end)
     print("\n✅ Evaluation completed successfully!")
 
 

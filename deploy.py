@@ -33,10 +33,11 @@ def main():
                         help="Directory to save runtime info (info.json)")
     parser.add_argument("--device", type=str, default="cuda",
                         help="Device to load model on (cuda / cpu / auto)")
-    parser.add_argument("--port", default=8000, type=int,
+    parser.add_argument("--port", default=8010, type=int,
                         help="Port number for FastAPI server")
     parser.add_argument("--host", default="0.0.0.0", type=str,
                         help="Host address for FastAPI server")
+    parser.add_argument("--disable_slurm", action="store_true", default=False)
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -102,7 +103,7 @@ def main():
     node_list = os.environ.get("SLURM_NODELIST")
     job_id = os.environ.get("SLURM_JOB_ID", "none")
 
-    if node_list:
+    if node_list and not args.disable_slurm:
         print("\n🖥️  SLURM Environment Detected:")
         print(f"   Node list : {node_list}")
         print(f"   Job ID    : {job_id}")
