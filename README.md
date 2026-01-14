@@ -43,6 +43,7 @@ conda create -n XVLA python=3.10 -y
 conda activate XVLA
 
 # Install dependencies
+conda install -y -c conda-forge opencv
 pip install -r requirements.txt
 ```
 
