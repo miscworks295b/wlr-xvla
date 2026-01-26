@@ -1,0 +1,31 @@
+[build-system]
+requires = [
+    "setuptools", 
+    "setuptools_scm",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xvla-wlr"
+dynamic = ["version"]
+requires-python = ">=3.11"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = [
+    "torch",
+    "einops",
+    "torchvision",
+    "numpy",
+    "polars",
+    # TODO vendored x-vla deps
+    # ...
+    "peft",
+]
+
+[tool.setuptools.packages.find]
+where = ["packages"]
+namespaces = true
+
+[tool.setuptools_scm]
+version_scheme = "release-branch-semver"
+local_scheme = "no-local-version"
