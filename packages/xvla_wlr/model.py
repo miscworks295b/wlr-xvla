@@ -122,20 +122,50 @@ def _encode_ee6d(
     return a
 
 
+# TODO ref https://github.com/facebookresearch/pytorch3d/blob/cbcae096a0b9b04f7c515d11bb4285a82e96b8d7/pytorch3d/transforms/rotation_conversions.py#L606
+def _rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    using Gram--Schmidt orthogonalization per Section B of [1].
+    Args:
+        d6: 6D rotation representation, of size (*, 6)
+
+    Returns:
+        batch of rotation matrices of size (*, 3, 3)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = torch.nn.functional.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+    b2 = torch.nn.functional.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
+
+
 # TODO
 def _decode_ee6d(a: Annotated[torch.FloatTensor, "*n buffer:10"]):
     r"""
     TODO doc
     """
 
-    # TODO complete xform matrix
-    a[..., 0:3]
-    a[..., 3:9]
+    *batch_size, _ = a.shape
 
-    ee_transform = ...
-    gripper_val = a[..., 9:10]
+    translation = a[..., 0:3]
+    rotation = _rotation_6d_to_matrix(a[..., 3:9])
 
-    return ee_transform, gripper_val
+    ee_transform = torch.empty((*batch_size, 4, 4))
+    ee_transform[..., :3, :3] = rotation
+    ee_transform[..., :3, 3] = translation
+    ee_transform[..., 3, 3] = 1.
+
+    ee_gripper_val = a[..., 9:10]
+
+    return ee_transform, ee_gripper_val
 
 
 def get_peft_model(model: XVLA):
