@@ -161,6 +161,7 @@ def _decode_ee6d(a: Annotated[torch.FloatTensor, "*n buffer:10"]):
     ee_transform = torch.empty((*batch_size, 4, 4))
     ee_transform[..., :3, :3] = rotation
     ee_transform[..., :3, 3] = translation
+    ee_transform[..., 3, :3] = 0.
     ee_transform[..., 3, 3] = 1.
 
     ee_gripper_val = a[..., 9:10]
