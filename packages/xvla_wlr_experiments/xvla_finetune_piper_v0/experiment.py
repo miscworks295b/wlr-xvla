@@ -1,44 +1,61 @@
 
-
-
 import os
+import dataclasses
+import contextlib
 import importlib.resources
 import warnings
+from typing import Iterable
 
 import torch
-torch.set_float32_matmul_precision("high")
-torch._dynamo.config.compiled_autograd = True
+import numpy
+import accelerate
 import tqdm.auto
 from datasets_wlr import WLRZhuangEpisodeDataset
 from curobo.types.robot import RobotConfig
+from curobo.types.base import TensorDeviceType as _CuroboTensorDeviceType
 from xvla_wlr.model import DATA_DOMAIN_ID, XVLA, XVLAProcessor, Trainer, get_peft_model, Action, Observation
-from xvla_wlr_experiments.xvla_finetune_piper_v0.dataset import XVLAWLRZhuangEpisodeDataset
-import xvla_wlr_experiments.xvla_finetune_piper_v0.assets
+from xvla_wlr_experiments.xvla_finetune_piper_v0.dataset import XVLAWLRZhuangEpisodeDataset, normalize_observation, XVLAChunk, XVLAChunkDataset
+from xvla_wlr_experiments.xvla_finetune_piper_v0 import assets
 
 
 def main(
-    # TODO example: "samples/2026-01-21_demo_clothes/episode_0/data.json"
-    wlr_dataset_paths: list[str],
+    wlr_dataset_paths: Iterable[str] | None = None,
     checkpoint_load_path: ... = "2toINF/X-VLA-SoftFold",
-    checkpoint_save_iteration_interval: int = 1,
+    checkpoint_save_step_interval: int = 100,
     checkpoint_save_path: ... = None,
     processor_checkpoint_load_path: ... = "2toINF/X-VLA-SoftFold",
+    processor_checkpoint_save_path: ... = None,
     num_iterations: int = 1,
     num_timesteps_per_episode: int = 4,
     num_timesteps_per_action: int = 2,
     use_peft: bool = True,
-    use_torch_compile: bool = False,
-    device: str = "cuda",
-    logging_training_report_timestep_interval: int = 10,
+    device: str | None = None,
+    report_step_interval: int = 10,
 ):
-    
-    with (
-        tqdm.auto.tqdm(total=1., leave=False) as pbar,
-        importlib.resources.as_file(
-            importlib.resources.files(xvla_wlr_experiments.xvla_finetune_piper_v0.assets) 
-            / "piper-dualarm"
-        ) as piper_dualarm_asset_path
-    ):
+    accelerator = accelerate.Accelerator(
+        # log_with="tensorboard", 
+        # project_dir=".xvla",
+        # fsdp_plugin=accelerate.FullyShardedDataParallelPlugin(),
+    )
+
+    with contextlib.ExitStack() as context_stack:
+        pbar = context_stack.enter_context(tqdm.auto.tqdm(total=1., leave=False))
+        piper_dualarm_asset_path = context_stack.enter_context(
+            importlib.resources.as_file(
+                importlib.resources.files(assets) 
+                / "piper-dualarm"
+            )
+        )
+        if wlr_dataset_paths is None:
+            wlr_dataset_paths = [
+                str(context_stack.enter_context(
+                    importlib.resources.as_file(
+                        importlib.resources.files(assets) 
+                        / "wlr-dataset-sample"
+                    )                
+                ) / "data.json")
+            ]
+
         # TODO
         model = XVLA.from_pretrained(checkpoint_load_path)
         processor = XVLAProcessor.from_pretrained(processor_checkpoint_load_path, use_fast=True)
@@ -48,80 +65,112 @@ def main(
         if device is not None:
             model = model.to(device=device)
 
-        trainer = Trainer(model, processor)
+        trainer = Trainer(model, processor, accelerator=accelerator)
 
-        for i in range(num_iterations):
-            for i_dataset, wlr_dataset_path in enumerate(wlr_dataset_paths):
-                pbar.update((i_dataset + 1) / len(wlr_dataset_paths) - pbar.n)
+        for i_epoch in range(num_iterations):
+            for wlr_dataset_path in wlr_dataset_paths:
                 pbar.set_description(f"Loading episode dataset: {wlr_dataset_path}")
-                # TODO
-                dataset = WLRZhuangEpisodeDataset(wlr_dataset_path)
-                domain_id = DATA_DOMAIN_ID["robomind-agilex"]
 
-                # TODO
                 xvla_dataset = XVLAWLRZhuangEpisodeDataset(
-                    dataset=dataset,
+                    dataset=WLRZhuangEpisodeDataset(wlr_dataset_path),
                     robot_config_left=RobotConfig.from_basic(
                         piper_dualarm_asset_path / "piper-dualarm.urdf",
                         base_link="common_base_link",
                         ee_link="left_link8",
+                        # TODO NOTE this must be used due to a BUG in curobo
+                        # TODO NOTE the curobo kernels assume all inputs 
+                        # to be on the device of the current stream. cuda illegal
+                        # mem access will occur when theres any mismatch.
+                        tensor_args=_CuroboTensorDeviceType(device=torch.device(
+                            "cuda",
+                            index=torch.cuda.current_device(),
+                        )),
                     ),
                     robot_config_right=RobotConfig.from_basic(
                         piper_dualarm_asset_path / "piper-dualarm.urdf",
                         base_link="common_base_link",
                         ee_link="right_link8",
+                        # TODO NOTE this must be used due to a BUG in curobo
+                        tensor_args=_CuroboTensorDeviceType(device=torch.device(
+                            "cuda",
+                            index=torch.cuda.current_device(),
+                        )),
                     ),
-                    domain_id=domain_id,
+                    domain_id=DATA_DOMAIN_ID["AIR-AGILEX-HQ"],
                     prefetch=True,
                 )
 
+                def xvla_dataset_chunk_collate(chunks: list[XVLAChunk]):
+                    _concat = lambda arrays: (
+                        torch.concatenate(arrays, dim=0)
+                        if torch.is_tensor(arrays[0]) else
+                        numpy.concatenate(arrays, axis=0)
+                    )
+
+                    observation = Observation(
+                        text=_concat([chunk.observation.text for chunk in chunks]),
+                        images=_concat([chunk.observation.images for chunk in chunks]),
+                        images_mask=_concat([chunk.observation.images_mask for chunk in chunks]),
+                        domain_id=_concat([chunk.observation.domain_id for chunk in chunks]),
+                        ee_transform=_concat([chunk.observation.ee_transform for chunk in chunks]),
+                        ee_gripper_val=_concat([chunk.observation.ee_gripper_val for chunk in chunks]),
+                    )
+
+                    action = Action(
+                        ee_transforms=_concat([chunk.action.ee_transforms for chunk in chunks]),
+                        ee_gripper_vals=_concat([chunk.action.ee_gripper_vals for chunk in chunks]),
+                    )
+                    
+                    return XVLAChunk(observation=observation, action=action)
+
                 # TODO
-                fit = torch.compile(trainer.fit, disable=not use_torch_compile)
+                xvla_dataset_chunk_loader = torch.utils.data.DataLoader(
+                    XVLAChunkDataset(
+                        xvla_dataset=xvla_dataset,
+                        num_timesteps_per_episode=num_timesteps_per_episode,
+                        num_timesteps_per_action=num_timesteps_per_action,
+                    ),
+                    collate_fn=xvla_dataset_chunk_collate,
+                )
+                xvla_dataset_chunk_loader = accelerator.prepare(xvla_dataset_chunk_loader)
 
                 with (
                     tqdm.auto.tqdm(total=1., leave=False) as pbar_training,
                 ):
-                    timestep_current = 0
-
-                    while True:
-                        if timestep_current + num_timesteps_per_episode >= len(xvla_dataset):
-                            break
-                        observation = xvla_dataset[
-                            timestep_current
-                            :timestep_current + num_timesteps_per_episode
-                        ]
-
-                        action = Action.from_observation(
-                            observation,
-                            num_steps=num_timesteps_per_action,
+                    for observation, action in xvla_dataset_chunk_loader:
+                        losses = trainer.fit(
+                            observation=observation,
+                            action=action,
                         )
 
-                        action_next = action[1:]
-                        observation_current = observation[:len(action_next)]
+                        if trainer._step_count % report_step_interval == 0:
+                            pbar_training.set_description(
+                                f"Epoch: {trainer._step_count}. "
+                                f"Loss: {({name: x.item() for name, x in losses.items()})}"
+                            )
 
-                        loss = fit(
-                            observation=observation_current,
-                            action=action_next,
-                        )
+                        if trainer._step_count % checkpoint_save_step_interval == 0:
+                            if accelerator.is_main_process:
+                                def expand_checkpoint_path(path_or_path_gen):
+                                    match path_or_path_gen:
+                                        case None:
+                                            return None
+                                        case str() as path:
+                                            return path
+                                        case path_gen if callable(path_or_path_gen):
+                                            return path_gen(trainer)
+                                        case _:
+                                            warnings.warn(f"Invalid checkpoint saving path: {checkpoint_save_path}")
+                                            return None
+                                checkpoint_save_path_ = expand_checkpoint_path(checkpoint_save_path)
+                                if checkpoint_save_path_ is not None:
+                                    accelerator.unwrap_model(trainer._model).save_pretrained(checkpoint_save_path_)
+                                    pbar_training.set_description(f"Checkpoint at epoch {trainer._step_count}: {checkpoint_save_path_}")
+                                processor_checkpoint_save_path_ = expand_checkpoint_path(processor_checkpoint_save_path)
+                                if processor_checkpoint_save_path_ is not None:
+                                    processor.save_pretrained(processor_checkpoint_save_path_)
+                                    pbar_training.set_description(f"Processor checkpoint at epoch {trainer._step_count}: {processor_checkpoint_save_path_}")
 
-                        timestep_current += len(observation_current)
 
-                        if timestep_current % logging_training_report_timestep_interval == 0:
-                            pbar_training.update(timestep_current / len(xvla_dataset) - pbar_training.n)
-                            pbar_training.set_description(f"Training episode timestep: {timestep_current} of {len(xvla_dataset)}. Loss: {loss}")
-
-            if i % checkpoint_save_iteration_interval == 0:
-                path = None
-                match checkpoint_save_path:
-                    case None:
-                        pass
-                    case str():
-                        path = checkpoint_save_path
-                    case path_gen if callable(checkpoint_save_path):
-                        path = path_gen(i)
-                    case _:
-                        warnings.warn(f"Invalid checkpoint saving path: {checkpoint_save_path}. Skipping checkpointing.")
-                        continue
-                if path is not None:
-                    model.save_pretrained(path)
-                    print(f"Checkpoint at iteration {i}: {path}")
+if __name__ == "__main__":
+    main()

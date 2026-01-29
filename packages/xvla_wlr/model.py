@@ -15,9 +15,17 @@ from .xvla.datasets.domain_config import DATA_WEIGHTS, DATA_DOMAIN_ID
 
 @dataclasses.dataclass(slots=True)
 class Observation:
+    text: Annotated[str, "*batch"]
+    images: Annotated[torch.FloatTensor, "*batch camera:3 channel:3 height width", ">=0.,<=1."]
+    images_mask: Annotated[torch.BoolTensor, "*batch camera:3"]
+    domain_id: Annotated[torch.LongTensor, "*batch"]
+    # proprio
+    ee_transform: Annotated[torch.FloatTensor, "*batch ee:2 4 4"]
+    ee_gripper_val: Annotated[torch.FloatTensor, "*batch ee:2", ">=0.,<=1."]
+
     @classmethod
     def sample(cls):
-        return Observation(
+        return cls(
             text=["do something"],
             images=torch.full((1, 3, 3, 224, 224), fill_value=0.),
             images_mask=torch.full((1, 3), fill_value=True),
@@ -26,14 +34,6 @@ class Observation:
             ee_transform=torch.full((1, 2, 4, 4), fill_value=1.),
             ee_gripper_val=torch.full((1, 2), fill_value=0.),
         )
-
-    text: Annotated[str, "*batch"]
-    images: Annotated[torch.FloatTensor, "*batch camera:3 channel:3 height width", ">=0.,<=1."]
-    images_mask: Annotated[torch.BoolTensor, "*batch camera:3"]
-    domain_id: Annotated[torch.LongTensor, "*batch"]
-    # proprio
-    ee_transform: Annotated[torch.FloatTensor, "*batch ee:2 4 4"]
-    ee_gripper_val: Annotated[torch.FloatTensor, "*batch ee:2", ">=0.,<=1."]
 
     def __len__(self):
         # TODO
@@ -52,10 +52,14 @@ class Observation:
 
 @dataclasses.dataclass(slots=True)
 class Action:
+    # proprio
+    ee_transforms: Annotated[torch.FloatTensor, "*batch time ee:2 4 4"]
+    ee_gripper_vals: Annotated[torch.FloatTensor, "*batch time ee:2", ">=0.,<=1."]
+
     @classmethod
     def sample(cls):
         # TODO use torch.eye(4, 4) for transforms
-        return Action(
+        return cls(
             # TODO
             ee_transforms=torch.full((1, 30, 2, 4, 4), fill_value=1.),
             ee_gripper_vals=torch.full((1, 30, 2), fill_value=0.),
@@ -82,10 +86,6 @@ class Action:
             ee_transforms=ee_transforms,
             ee_gripper_vals=ee_gripper_vals,
         )
-
-    # proprio
-    ee_transforms: Annotated[torch.FloatTensor, "*batch time ee:2 4 4"]
-    ee_gripper_vals: Annotated[torch.FloatTensor, "*batch time ee:2", ">=0.,<=1."]
 
     def __len__(self):
         # TODO
@@ -306,13 +306,14 @@ class Trainer:
         if self._accelerator is not None:
             self._model = self._accelerator.prepare(self._model)
             self._optimizer = self._accelerator.prepare(self._optimizer)
-        self._step = 0
+        self._step_count = 0
 
     def fit(
         self,
         observation: Observation, 
         action: Action,
         #
+        freeze_step: int = 1_000,
         max_grad_norm: float | None = 1.,
     ):
         model = self._model
@@ -342,16 +343,16 @@ class Trainer:
         # TODO
         update_group_lrs(
             self._optimizer, 
-            step=self._step, 
+            step=self._step_count, 
             args=SimpleNamespace(
                 # TODO
                 learning_rate=1e-4,
                 # TODO
                 learning_coef=1.,
                 # TODO
-                freeze_steps=1000,
-                warmup_steps=2000,
+                freeze_steps=freeze_step,
                 # TODO
+                warmup_steps=2000,
                 iters=1000000,
                 min_lr_ratio=.1,
                 use_cosine_decay=False,
@@ -360,6 +361,6 @@ class Trainer:
         self._optimizer.step()
         self._optimizer.zero_grad()
 
-        self._step += 1
+        self._step_count += 1
 
-        return total_loss
+        return losses

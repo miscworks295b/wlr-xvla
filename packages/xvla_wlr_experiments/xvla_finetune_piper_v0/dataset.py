@@ -1,13 +1,35 @@
-from typing import Annotated
+import dataclasses
+from typing import Annotated, NamedTuple
 
 import torch
+import torch.linalg
 import numpy
 import einops
 import torchvision.transforms.functional
 from curobo.types.robot import RobotConfig
+from curobo.types.base import TensorDeviceType as _CuroboTensorDeviceType
 from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
 from xvla_wlr.model import DATA_DOMAIN_ID, Observation, Action
 from datasets_wlr import WLRZhuangEpisodeDataset
+
+
+def compute_conservative_reach_radius(robot: RobotConfig):
+    # TODO filter links
+    link_transforms_positions = robot.kinematics.kinematics_config.fixed_transforms[..., :3, 3]
+    return torch.sum(torch.linalg.norm(link_transforms_positions, dim=-1))
+
+
+def normalize_observation(robots: list[RobotConfig], observation: Observation):
+    ee_transform = observation.ee_transform.clone()
+    *_, num_ees, _, _ = ee_transform.shape
+    for i_ee in range(num_ees):
+        translation_scale = compute_conservative_reach_radius(robots[i_ee])
+        ee_transform[..., i_ee, :3, 3] /= translation_scale
+
+    return dataclasses.replace(
+        observation,
+        ee_transform=ee_transform,
+    )
 
 
 class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
@@ -22,20 +44,29 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
         robot_config_right: RobotConfig,
         domain_id: Annotated[int, DATA_DOMAIN_ID],
         prefetch: bool = False,
+        device: torch.device | None = None,
     ):
         self._dataset = dataset
         if prefetch:
             self._dataset = self._dataset[:]
+        if device is None:
+            device = torch.device(
+                "cuda",
+                index=torch.cuda.current_device(),
+            )
         self._ik_solver_left = IKSolver(
             IKSolverConfig.load_from_robot_config(
                 robot_cfg=robot_config_left,
-            )
+                tensor_args=_CuroboTensorDeviceType(device=device),
+            ),
         )
         self._ik_solver_right = IKSolver(
             IKSolverConfig.load_from_robot_config(
                 robot_cfg=robot_config_right,
+                tensor_args=_CuroboTensorDeviceType(device=device),
             )
         )
+        # TODO
         self._domain_id = domain_id
 
     def __len__(self):
@@ -78,8 +109,8 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
             solver.fk(
                 torch.asarray(
                     d[..., 0:6], 
-                    dtype=torch.float,
-                    device="cuda",
+                    dtype=solver.tensor_args.dtype,
+                    device=solver.tensor_args.device,
                 )
             )
             .ee_pose.get_matrix()
@@ -111,3 +142,57 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
         )
 
         return observation
+    
+
+class XVLAChunk(NamedTuple):
+    observation: Observation
+    action: Action
+
+
+class XVLAChunkDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        xvla_dataset: torch.utils.data.Dataset[Observation],
+        *,
+        num_timesteps_per_episode: int,
+        num_timesteps_per_action: int,
+        stride: int | None = None,
+    ):
+        self.dataset = xvla_dataset
+        self.num_timesteps_per_episode = int(num_timesteps_per_episode)
+        self.num_timesteps_per_action = int(num_timesteps_per_action)
+
+        self.stride = int(
+            max(1, self.num_timesteps_per_episode - self.num_timesteps_per_action) 
+            if stride is None else 
+            stride
+        )
+
+    def __len__(self) -> int:
+        max_start = len(self.dataset) - self.num_timesteps_per_episode
+        if max_start < 0:
+            return 0
+        return (max_start // self.stride) + 1
+
+    def __getitem__(self, idx: int):
+        if idx < 0 or idx >= len(self):
+            raise IndexError(idx)
+
+        start = idx * self.stride
+        stop = start + self.num_timesteps_per_episode
+
+        observation = self.dataset[start:stop]
+
+        action = Action.from_observation(
+            observation,
+            num_steps=self.num_timesteps_per_action,
+        )
+
+        action_next = action[1:]
+        observation_current = observation[:len(action_next)]
+
+        return XVLAChunk(
+            observation=observation_current,
+            action=action_next,
+        )
+
