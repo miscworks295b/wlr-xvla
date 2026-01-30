@@ -368,6 +368,10 @@ class XVLAAgent:
                 # config["peft_model"] = self._peft_model
                 config["_accelerator"] = self._accelerator
             case _ as resource:
+                # TODO
+                # if not is_main_process:
+                #     return
+
                 path = pathlib.Path(resource)
                 base_path = path.parent
                 if not force and (path.exists() or base_path.exists()):
@@ -381,10 +385,18 @@ class XVLAAgent:
                 config["model"] = dict(
                     pretrained_model_name_or_path="./xvla"
                 )
-                self._model.save_pretrained(
-                    base_path / config["model"]["pretrained_model_name_or_path"], 
-                    is_main_process=is_main_process,
-                )
+                if self._accelerator is not None:
+                    self._accelerator.unwrap_model(self._model).save_pretrained(
+                        base_path / config["model"]["pretrained_model_name_or_path"], 
+                        is_main_process=is_main_process,
+                        save_function=self._accelerator.save,
+                        state_dict=self._accelerator.get_state_dict(self._model),
+                    )
+                else:
+                    self._model.save_pretrained(
+                        base_path / config["model"]["pretrained_model_name_or_path"], 
+                        is_main_process=is_main_process,
+                    )
 
                 config["processor"] = dict(
                     pretrained_model_name_or_path="./xvla_processor"
