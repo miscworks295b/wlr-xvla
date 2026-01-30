@@ -26,6 +26,7 @@ def main(
     processor_checkpoint_load_path: ... = "2toINF/X-VLA-SoftFold",
     processor_checkpoint_save_path: ... = None,
     num_iterations: int = 1,
+    num_iterations_per_episode: int = 10,
     num_timesteps_per_episode: int = 4,
     num_timesteps_per_action: int = 2,
     use_peft: bool = True,
@@ -33,9 +34,12 @@ def main(
     report_step_interval: int = 10,
 ):
     accelerator = accelerate.Accelerator(
-        # log_with="tensorboard", 
-        # project_dir=".xvla",
-        # fsdp_plugin=accelerate.FullyShardedDataParallelPlugin(),
+        # TODO NOTE accelerate does not support custom collate!!!
+        # dataloader_config=accelerate.utils.DataLoaderConfiguration(
+        #     dispatch_batches=True,  
+        #     split_batches=False,
+        #     even_batches=False,
+        # ),
     )
 
     with contextlib.ExitStack() as context_stack:
@@ -67,7 +71,7 @@ def main(
 
         trainer = Trainer(model, processor, accelerator=accelerator)
 
-        for i_epoch in range(num_iterations):
+        for _ in range(num_iterations):
             for wlr_dataset_path in wlr_dataset_paths:
                 pbar.set_description(f"Loading episode dataset: {wlr_dataset_path}")
 
@@ -134,17 +138,15 @@ def main(
                 )
                 xvla_dataset_chunk_loader = accelerator.prepare(xvla_dataset_chunk_loader)
 
-                with (
-                    tqdm.auto.tqdm(total=1., leave=False) as pbar_training,
-                ):
-                    for observation, action in xvla_dataset_chunk_loader:
+                for _ in range(num_iterations_per_episode):
+                    for observation, action in list(xvla_dataset_chunk_loader):
                         losses = trainer.fit(
                             observation=observation,
                             action=action,
                         )
 
                         if trainer._step_count % report_step_interval == 0:
-                            pbar_training.set_description(
+                            pbar.set_description(
                                 f"Epoch: {trainer._step_count}. "
                                 f"Loss: {({name: x.item() for name, x in losses.items()})}"
                             )
@@ -164,12 +166,18 @@ def main(
                                             return None
                                 checkpoint_save_path_ = expand_checkpoint_path(checkpoint_save_path)
                                 if checkpoint_save_path_ is not None:
-                                    accelerator.unwrap_model(trainer._model).save_pretrained(checkpoint_save_path_)
-                                    pbar_training.set_description(f"Checkpoint at epoch {trainer._step_count}: {checkpoint_save_path_}")
+                                    # TODO NOTE accelerate sucks. wtf is this???
+                                    accelerator.unwrap_model(trainer._model).save_pretrained(
+                                        checkpoint_save_path_,
+                                        is_main_process=accelerator.is_main_process,
+                                        save_function=accelerator.save,
+                                        state_dict=accelerator.get_state_dict(trainer._model),
+                                    )
+                                    pbar.set_description(f"Checkpoint at epoch {trainer._step_count}: {checkpoint_save_path_}")
                                 processor_checkpoint_save_path_ = expand_checkpoint_path(processor_checkpoint_save_path)
                                 if processor_checkpoint_save_path_ is not None:
                                     processor.save_pretrained(processor_checkpoint_save_path_)
-                                    pbar_training.set_description(f"Processor checkpoint at epoch {trainer._step_count}: {processor_checkpoint_save_path_}")
+                                    pbar.set_description(f"Processor checkpoint at epoch {trainer._step_count}: {processor_checkpoint_save_path_}")
 
 
 if __name__ == "__main__":
