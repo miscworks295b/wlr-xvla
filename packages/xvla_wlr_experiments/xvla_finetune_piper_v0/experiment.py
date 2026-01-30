@@ -13,8 +13,7 @@ import tqdm.auto
 from datasets_wlr import WLRZhuangEpisodeDataset
 from curobo.types.robot import RobotConfig
 from curobo.types.base import TensorDeviceType as _CuroboTensorDeviceType
-from xvla_wlr.agent import XVLAAgent, XVLAAction, XVLAObservation
-from xvla_wlr.model_legacy import DATA_DOMAIN_ID, XVLA, XVLAProcessor, Trainer, get_peft_model, Action, Observation
+from xvla_wlr.agent import XVLAAgent, XVLAAction, XVLAObservation, XVLA_DOMAIN_IDS
 from xvla_wlr_experiments.xvla_finetune_piper_v0.dataset import XVLAWLRZhuangEpisodeDataset, normalize_observation, XVLAChunk, XVLAChunkDataset
 from xvla_wlr_experiments.xvla_finetune_piper_v0 import assets
 
@@ -25,7 +24,7 @@ def main(
     checkpoint_save_step_interval: int = 100,
     checkpoint_save_target: ... = None,
     num_iterations: int = 1,
-    num_iterations_per_episode: int = 1000,
+    num_iterations_per_episode: int = 10,
     num_timesteps_per_episode: int = 4,
     num_timesteps_per_action: int = 2,
     report_step_interval: int = 10,
@@ -89,7 +88,7 @@ def main(
                             index=torch.cuda.current_device(),
                         )),
                     ),
-                    domain_id=DATA_DOMAIN_ID["AIR-AGILEX-HQ"],
+                    domain_id=XVLA_DOMAIN_IDS["AIR-AGILEX-HQ"],
                     prefetch=True,
                 )
 

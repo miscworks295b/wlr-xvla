@@ -13,8 +13,11 @@ import accelerate
 
 from .xvla.models.modeling_xvla import XVLA
 from .xvla.models.processing_xvla import XVLAProcessor
-from .xvla.train import update_group_lrs, build_optimizer
-from .xvla.datasets.domain_config import DATA_WEIGHTS, DATA_DOMAIN_ID
+from .xvla.train import (
+    update_group_lrs as _xvla_update_group_lrs, 
+    build_optimizer as _xvla_build_optimizer,
+)
+from .xvla.datasets.domain_config import DATA_DOMAIN_ID as XVLA_DOMAIN_IDS
 
 
 @dataclasses.dataclass(slots=True)
@@ -33,7 +36,7 @@ class XVLAObservation:
             text=["do something"],
             images=torch.full((1, 3, 3, 224, 224), fill_value=0.),
             images_mask=torch.full((1, 3), fill_value=True),
-            domain_id=torch.full((1,), fill_value=DATA_DOMAIN_ID["lift2"]),
+            domain_id=torch.full((1,), fill_value=XVLA_DOMAIN_IDS["lift2"]),
             # TODO
             ee_transform=torch.full((1, 2, 4, 4), fill_value=1.),
             ee_gripper_val=torch.full((1, 2), fill_value=0.),
@@ -213,7 +216,8 @@ class XVLAAgent:
                     "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold"
                 },
                 processor={
-                    "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold"
+                    "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold",
+                    "use_fast": True,
                 },
                 adapter=True,
                 accelerator=True,
@@ -517,7 +521,7 @@ class XVLAAgent:
     @functools.cached_property
     def _learning_state(self):
         return self._LearningState(
-            optimizer=build_optimizer(
+            optimizer=_xvla_build_optimizer(
                 model=self._runtime_model,
                 lr=1e-2,
                 weight_decay=0.,
@@ -557,7 +561,7 @@ class XVLAAgent:
 
         learning_state = self._learning_state
         # TODO
-        update_group_lrs(
+        _xvla_update_group_lrs(
             learning_state.optimizer, 
             step=learning_state.step_count, 
             args=SimpleNamespace(

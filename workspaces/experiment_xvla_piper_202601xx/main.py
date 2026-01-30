@@ -12,7 +12,8 @@ checkpoint_source = XVLAAgent.Config(
         "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold"
     },
     processor={
-        "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold"
+        "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold",
+        "use_fast": True,
     },
     adapter=True,
     accelerator=True,
@@ -23,6 +24,7 @@ if os.path.exists(current_checkpoint_path):
 main(
     glob.glob("/liujinxin/dataset/piper/cloth_new/**/data.json", recursive=True), 
     num_iterations=10,
+    num_iterations_per_episode=100,
     num_timesteps_per_episode=32,
     num_timesteps_per_action=4,
     checkpoint_source=checkpoint_source,
