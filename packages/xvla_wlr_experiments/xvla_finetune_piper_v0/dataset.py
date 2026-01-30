@@ -9,7 +9,7 @@ import torchvision.transforms.functional
 from curobo.types.robot import RobotConfig
 from curobo.types.base import TensorDeviceType as _CuroboTensorDeviceType
 from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
-from xvla_wlr.model import DATA_DOMAIN_ID, Observation, Action
+from xvla_wlr.model_legacy import DATA_DOMAIN_ID, Observation, Action
 from datasets_wlr import WLRZhuangEpisodeDataset
 
 

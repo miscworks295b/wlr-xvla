@@ -1,3 +1,6 @@
+import pathlib
+import os
+import json
 import dataclasses
 from typing import Annotated
 from types import SimpleNamespace
@@ -183,6 +186,185 @@ def get_peft_model(model: XVLA):
     )
     model = peft.get_peft_model(model, lora_config)
     return model
+
+
+class XVLAAgent:
+    def __init__(
+        self,
+        _model: XVLA,
+        _processor: XVLAProcessor,
+        _peft_model: peft.PeftModel | None = None,
+        _accelerator: accelerate.Accelerator | None = None,
+        _use_peft: bool = False,
+    ):
+        self._model = _model
+        self._processor = _processor
+        self._peft_model = _peft_model
+        if self._peft_model is None and _use_peft:
+            self._peft_model = peft.PeftModel(
+                self._model,
+                peft_config=peft.LoraConfig(
+                    lora_alpha=16,
+                    r=8,
+                    bias="none",
+                    target_modules="all-linear",
+                    modules_to_save=[
+                        "transformer.soft_prompt_hub",
+                        "transformer.action_encoder",
+                        "transformer.action_decoder",
+                    ],
+                ),
+            )
+        self._accelerator = _accelerator    
+
+    @classmethod
+    def load(cls, resource: os.PathLike):
+        def _pretrained_kwargs_from_path(path: ...):
+            if pathlib.Path(path).is_file():
+                with open(path) as f:
+                    return json.load(f)
+            return dict(
+                pretrained_model_name_or_path=path,
+            )
+
+        checkpoint_path = pathlib.Path(resource)
+
+        model = XVLA.from_pretrained(
+            **_pretrained_kwargs_from_path(checkpoint_path / "xvla"),
+        )
+        processor = XVLAProcessor.from_pretrained(
+            **_pretrained_kwargs_from_path(checkpoint_path / "xvla_processor"),
+        )
+
+        peft_model = None
+        if (checkpoint_path / "xvla_peft").exists():
+            peft_model = peft.PeftModel.from_pretrained(
+                **_pretrained_kwargs_from_path(checkpoint_path / "xvla_peft")
+            )
+        
+        return cls(
+            _model=model, 
+            _processor=processor, 
+            _peft_model=peft_model,
+        )
+
+    def save(
+        self,
+        resource: os.PathLike, 
+    ):
+        is_main_process = True
+        if self._accelerator is not None:
+            is_main_process = self._accelerator.is_main_process        
+        
+        checkpoint_path = pathlib.Path(resource)
+
+        self._model.save_pretrained(checkpoint_path / "xvla", is_main_process=is_main_process)
+        self._processor.save_pretrained(checkpoint_path / "xvla_processor")
+        if self._peft_model is not None:
+            self._peft_model.save_pretrained(checkpoint_path / "xvla_peft", is_main_process=is_main_process)
+
+    def compute_losses(
+        self,
+        observation: Observation, 
+        action: Action,
+    ):
+        model = self._model
+        processor = self._processor
+
+        #
+        _model_input_ids = processor.encode_language(observation.text)["input_ids"]
+        # TODO rm
+        # _model_image_input = einops.rearrange(
+        #     observation.images, 
+        #     "batch camera height width channel -> batch camera channel height width",
+        # )
+        _model_image_input = processor.process_image(observation.images)
+        _model_image_mask = observation.images_mask
+        _model_domain_id = observation.domain_id
+        _model_proprio = _encode_ee6d(
+            ee_transform=observation.ee_transform,
+            ee_gripper_val=observation.ee_gripper_val,
+        )
+        _model_proprio = einops.rearrange(
+            _model_proprio,
+            "batch ee buffer -> batch (ee buffer)",
+            ee=2, 
+            buffer=10,
+        )
+
+        #
+        _model_action = _encode_ee6d(
+            ee_transform=action.ee_transforms,
+            ee_gripper_val=action.ee_gripper_vals,
+        )
+        _model_action = einops.rearrange(
+            _model_action,
+            "batch time ee buffer -> batch time (ee buffer)",
+            ee=2, 
+            buffer=10,
+        )
+
+        losses = model.forward(
+            input_ids=_model_input_ids.to(model.device, non_blocking=True),
+            image_input=_model_image_input.to(model.device, non_blocking=True),
+            image_mask=_model_image_mask.to(model.device, non_blocking=True),
+            domain_id=_model_domain_id.to(model.device, non_blocking=True),
+            proprio=_model_proprio.to(model.device, non_blocking=True),
+            action=_model_action.to(model.device, non_blocking=True),
+        )
+
+        return losses
+
+    # TODO
+    def compute_actions(
+        self,
+        observation: Observation, 
+        num_denoising_steps: int = 10,
+    ) -> Action:
+        model = self._model
+        processor = self._processor
+
+        #
+        _model_input_ids = processor.encode_language(observation.text)["input_ids"]
+        # TODO rm
+        # _model_image_input = einops.rearrange(
+        #     observation.images, 
+        #     "batch camera height width channel -> batch camera channel height width",
+        # )
+        _model_image_input = processor.process_image(observation.images)
+        _model_image_mask = observation.images_mask
+        _model_domain_id = observation.domain_id
+        _model_proprio = _encode_ee6d(
+            ee_transform=observation.ee_transform,
+            ee_gripper_val=observation.ee_gripper_val,
+        )
+        _model_proprio = einops.rearrange(
+            _model_proprio,
+            "batch ee buffer -> batch (ee buffer)",
+            ee=2, 
+            buffer=10,
+        )
+
+        _model_actions = model.generate_actions(
+            input_ids=_model_input_ids.to(model.device, non_blocking=True),
+            image_input=_model_image_input.to(model.device, non_blocking=True),
+            image_mask=_model_image_mask.to(model.device, non_blocking=True),
+            domain_id=_model_domain_id.to(model.device, non_blocking=True),
+            proprio=_model_proprio.to(model.device, non_blocking=True),
+            steps=num_denoising_steps,
+        )
+        _model_actions = einops.rearrange(
+            _model_actions,
+            "batch time (ee buffer) -> batch time ee buffer",
+            ee=2, 
+            buffer=10,
+        )
+        ee_transforms, ee_gripper_vals = _decode_ee6d(_model_actions)
+
+        return Action(
+            ee_transforms=ee_transforms,
+            ee_gripper_vals=ee_gripper_vals,
+        )
 
 
 def compute_losses(

@@ -1,0 +1,581 @@
+import pathlib
+import os
+import json
+import dataclasses
+import functools
+from typing import Annotated, TypedDict, Literal, Unpack
+from types import SimpleNamespace
+
+import torch
+import einops
+import peft
+import accelerate
+
+from .xvla.models.modeling_xvla import XVLA
+from .xvla.models.processing_xvla import XVLAProcessor
+from .xvla.train import update_group_lrs, build_optimizer
+from .xvla.datasets.domain_config import DATA_WEIGHTS, DATA_DOMAIN_ID
+
+
+@dataclasses.dataclass(slots=True)
+class XVLAObservation:
+    text: Annotated[str, "*batch"]
+    images: Annotated[torch.FloatTensor, "*batch camera:3 channel:3 height width", ">=0.,<=1."]
+    images_mask: Annotated[torch.BoolTensor, "*batch camera:3"]
+    domain_id: Annotated[torch.LongTensor, "*batch"]
+    # proprio
+    ee_transform: Annotated[torch.FloatTensor, "*batch ee:2 4 4"]
+    ee_gripper_val: Annotated[torch.FloatTensor, "*batch ee:2", ">=0.,<=1."]
+
+    @classmethod
+    def sample(cls):
+        return cls(
+            text=["do something"],
+            images=torch.full((1, 3, 3, 224, 224), fill_value=0.),
+            images_mask=torch.full((1, 3), fill_value=True),
+            domain_id=torch.full((1,), fill_value=DATA_DOMAIN_ID["lift2"]),
+            # TODO
+            ee_transform=torch.full((1, 2, 4, 4), fill_value=1.),
+            ee_gripper_val=torch.full((1, 2), fill_value=0.),
+        )
+
+    def __len__(self):
+        # TODO
+        return len(self.ee_transform)
+    
+    def __getitem__(self, index):
+        return XVLAObservation(
+            text=self.text[index],
+            images=self.images[index],
+            images_mask=self.images_mask[index],
+            domain_id=self.domain_id[index],
+            ee_transform=self.ee_transform[index],
+            ee_gripper_val=self.ee_gripper_val[index],
+        )
+
+
+@dataclasses.dataclass(slots=True)
+class XVLAAction:
+    # proprio
+    ee_transforms: Annotated[torch.FloatTensor, "*batch time ee:2 4 4"]
+    ee_gripper_vals: Annotated[torch.FloatTensor, "*batch time ee:2", ">=0.,<=1."]
+
+    @classmethod
+    def sample(cls):
+        # TODO use torch.eye(4, 4) for transforms
+        return cls(
+            # TODO
+            ee_transforms=torch.full((1, 30, 2, 4, 4), fill_value=1.),
+            ee_gripper_vals=torch.full((1, 30, 2), fill_value=0.),
+        )
+    
+    @classmethod
+    def from_observation(
+        cls, 
+        observation: XVLAObservation,
+        num_steps: int = 30,
+        num_substeps: int = 1,
+    ):
+        ee_transforms = einops.rearrange(
+            torch.asarray(observation.ee_transform)
+            .unfold(0, size=num_steps, step=num_substeps),
+            "batch ee a b time -> batch time ee a b",
+        )
+        ee_gripper_vals = einops.rearrange(
+            torch.asarray(observation.ee_gripper_val)
+            .unfold(0, size=num_steps, step=num_substeps),
+            "batch ee time -> batch time ee",
+        )
+        return cls(
+            ee_transforms=ee_transforms,
+            ee_gripper_vals=ee_gripper_vals,
+        )
+
+    def __len__(self):
+        # TODO
+        return len(self.ee_transforms)
+    
+    def __getitem__(self, index):
+        return XVLAAction(
+            ee_transforms=self.ee_transforms[index],
+            ee_gripper_vals=self.ee_gripper_vals[index],
+        )
+
+
+def _xvla_encode_ee6d(
+    ee_transform: Annotated[torch.FloatTensor, "*n 4 4"], 
+    ee_gripper_val: Annotated[torch.FloatTensor, "*n"],
+) -> Annotated[torch.FloatTensor, "*n buffer:10"]:
+    r"""
+    TODO doc
+
+    :param ee_transform: End-effector 3D transformation matrix in column-vector convention.
+    :param ee_gripper_val: End-effector gripper setting.
+    :return: TODO
+    """
+
+    *batch_size_ee_transform, _a, _b = ee_transform.shape
+    assert _a == 4 and _b == 4
+    *batch_size_gripper, = ee_gripper_val.shape
+    batch_size = torch.broadcast_shapes(batch_size_ee_transform, batch_size_gripper)
+    # TODO
+    a = torch.empty((*batch_size, 10))
+    a[..., 0:3] = ee_transform[..., :3, [3]].reshape(*batch_size, -1)
+    a[..., 3:9] = ee_transform[..., :3, [0, 1]].reshape(*batch_size, -1)
+    a[..., 9:10] = ee_gripper_val.reshape(*batch_size, -1)
+    return a
+
+
+# TODO ref https://github.com/facebookresearch/pytorch3d/blob/cbcae096a0b9b04f7c515d11bb4285a82e96b8d7/pytorch3d/transforms/rotation_conversions.py#L606
+def _xvla_rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    using Gram--Schmidt orthogonalization per Section B of [1].
+    Args:
+        d6: 6D rotation representation, of size (*, 6)
+
+    Returns:
+        batch of rotation matrices of size (*, 3, 3)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = torch.nn.functional.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+    b2 = torch.nn.functional.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
+
+
+# TODO
+def _xvla_decode_ee6d(a: Annotated[torch.FloatTensor, "*n buffer:10"]):
+    r"""
+    TODO doc
+    """
+
+    *batch_size, _ = a.shape
+
+    translation = a[..., 0:3]
+    rotation = _xvla_rotation_6d_to_matrix(a[..., 3:9])
+
+    ee_transform = torch.empty((*batch_size, 4, 4))
+    ee_transform[..., :3, :3] = rotation
+    ee_transform[..., :3, 3] = translation
+    ee_transform[..., 3, :3] = 0.
+    ee_transform[..., 3, 3] = 1.
+
+    ee_gripper_val = a[..., 9:10]
+
+    return ee_transform, ee_gripper_val
+
+
+# def _xvla_get_peft_model(model: XVLA):
+#     lora_config = peft.LoraConfig(
+#         lora_alpha=16,
+#         r=8,
+#         bias="none",
+#         target_modules="all-linear",
+#         modules_to_save=[
+#             "transformer.soft_prompt_hub",
+#             "transformer.action_encoder",
+#             "transformer.action_decoder",
+#         ],
+#     )
+#     model = peft.get_peft_model(model, lora_config)
+#     return model
+
+
+def _xvla_get_peft_config():
+    return peft.LoraConfig(
+        lora_alpha=16,
+        r=8,
+        bias="none",
+        target_modules="all-linear",
+        modules_to_save=[
+            "transformer.soft_prompt_hub",
+            "transformer.action_encoder",
+            "transformer.action_decoder",
+        ],
+    )
+
+
+class XVLAAgent:
+    class Config(TypedDict):
+        @staticmethod
+        def sample():
+            return XVLAAgent.Config(
+                schema="xvla-config:v0",
+                model={
+                    "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold"
+                },
+                processor={
+                    "pretrained_model_name_or_path": "2toINF/X-VLA-SoftFold"
+                },
+                adapter=True,
+                accelerator=True,
+            )
+
+        schema: Literal["xvla-config:v0"]
+        model: XVLA | os.PathLike
+        processor: XVLAProcessor | os.PathLike
+        # peft_model: peft.PeftModel | os.PathLike | bool | None
+        adapter: peft.PeftModel | os.PathLike | bool | None
+        accelerator: accelerate.Accelerator | bool | None
+
+    def __init__(
+        self,
+        config: Config | os.PathLike,
+        **config_kwds: Unpack[Config],
+    ):
+        base_path = None
+        match config:
+            case dict():
+                config = config
+            case _:
+                with open(config) as f:
+                    config = json.load(f)
+                    base_path = os.path.dirname(f.name)
+        config = XVLAAgent.Config(config, **config_kwds)
+
+        if config.get("schema") is not None:
+            assert config["schema"] == "xvla-config:v0"
+
+        def _pretrained_kwargs_from_path(path: ..., base_path: ...):
+            if base_path is not None:
+                path = os.path.join(base_path, path)
+            if pathlib.Path(path).is_file():
+                with open(path) as f:
+                    return json.load(f)
+            return dict(
+                pretrained_model_name_or_path=path,
+            )
+        
+        def _pretrained_kwargs_from_kwargs(kwargs: ..., base_path: ...):
+            kwargs = dict(kwargs)
+            if base_path is not None:
+                # NOTE HACK we do this because `.from_pretrained` doesn't take a base path!
+                # `subfolder` is the closest we can get but it's for HF repos only. HF sucks!!!
+                for key in [
+                    "pretrained_model_name_or_path",
+                    "model_id",
+                ]:
+                    if key in kwargs:
+                        path = kwargs[key]
+                        kwargs[key] = os.path.join(base_path, path)
+            return kwargs
+        
+        match config.get("model"):
+            case XVLA() as model:
+                self._model = model
+            case dict() as pretrained_kwargs:
+                pretrained_kwargs = _pretrained_kwargs_from_kwargs(
+                    pretrained_kwargs, 
+                    base_path=base_path,
+                )
+                self._model = XVLA.from_pretrained(**pretrained_kwargs)
+            case _ as path:
+                self._model = XVLA.from_pretrained(
+                    **_pretrained_kwargs_from_path(path, base_path=base_path)
+                )
+
+        match config.get("processor"):
+            case XVLAProcessor() as processor:
+                self._processor = processor
+            case dict() as pretrained_kwargs:
+                pretrained_kwargs = _pretrained_kwargs_from_kwargs(
+                    pretrained_kwargs, 
+                    base_path=base_path,
+                )
+                self._processor = XVLAProcessor.from_pretrained(**pretrained_kwargs)            
+            case _ as path:
+                self._processor = XVLAProcessor.from_pretrained(
+                    **_pretrained_kwargs_from_path(path, base_path=base_path)
+                )
+
+        match config.get("adapter"):
+            case bool() as should_make_adapter:
+                if should_make_adapter:
+                    self._model.add_adapter(
+                        _xvla_get_peft_config()
+                    )
+            case None:
+                pass
+            case _:
+                # TODO
+                self._model.load_adapter
+                raise NotImplementedError("TODO")
+
+        # self._peft_model = None
+        # match config.get("peft_model"):
+        #     case bool() as should_make_peft_model:
+        #         if should_make_peft_model:
+        #             self._peft_model = _xvla_get_peft_model(self._model)             
+        #     case peft.PeftModel() as peft_model:
+        #         self._peft_model = peft_model
+        #     case dict() as pretrained_kwargs:
+        #         pretrained_kwargs = _pretrained_kwargs_from_kwargs(
+        #             pretrained_kwargs, 
+        #             base_path=base_path,
+        #         )
+        #         self._peft_model = peft.PeftModel.from_pretrained(
+        #             model=self._model,
+        #             **{
+        #                 "is_trainable": True,
+        #                 **pretrained_kwargs,
+        #             }
+        #         )
+        #     case _ as path:
+        #         self._peft_model = peft.PeftModel.from_pretrained(
+        #             model=self._model,
+        #             **{
+        #                 "is_trainable": True,
+        #                 **_pretrained_kwargs_from_path(path, base_path=base_path)
+        #             }
+        #         )
+
+        self._accelerator = config.get("accelerator", None)
+        match self._accelerator:
+            case bool() as should_make_accelerator:
+                if should_make_accelerator:
+                    self._accelerator = accelerate.Accelerator()
+            case _:
+                pass
+        if self._accelerator is not None:
+            self._model = self._accelerator.prepare(self._model)
+
+    def save(
+        self,
+        config: Config | os.PathLike,
+        force: bool = False,
+    ):
+        is_main_process = True
+        if self._accelerator is not None:
+            is_main_process = self._accelerator.is_main_process   
+
+        match config:
+            case dict() as config:
+                config["schema"] = "xvla-config:v0"
+                config["model"] = self._model
+                config["processor"] = self._processor
+                # config["peft_model"] = self._peft_model
+                config["_accelerator"] = self._accelerator
+            case _ as resource:
+                path = pathlib.Path(resource)
+                base_path = path.parent
+                if not force and (path.exists() or base_path.exists()):
+                    raise RuntimeError(
+                        f"Checkpoint or its base path already exists, "
+                        f"pass `force=True` to overwrite: {path}, {base_path}"
+                    )
+
+                config = XVLAAgent.Config()
+
+                config["model"] = dict(
+                    pretrained_model_name_or_path="./xvla"
+                )
+                self._model.save_pretrained(
+                    base_path / config["model"]["pretrained_model_name_or_path"], 
+                    is_main_process=is_main_process,
+                )
+
+                config["processor"] = dict(
+                    pretrained_model_name_or_path="./xvla_processor"
+                )
+                self._processor.save_pretrained(
+                    base_path / config["processor"]["pretrained_model_name_or_path"], 
+                )
+                
+                # if self._peft_model is not None:
+                #     config["peft_model"] = dict(
+                #         model_id="./xvla_peft"
+                #     )
+                #     self._peft_model.save_pretrained(
+                #         base_path / config["peft_model"]["model_id"], 
+                #         is_main_process=is_main_process,
+                #     )
+
+                with open(path, "w") as f:
+                    json.dump(config, f)
+
+    @property
+    def _runtime_model(self):
+        # if self._peft_model is not None:
+        #     return self._peft_model
+        return self._model
+
+    def compute_losses(
+        self,
+        observation: XVLAObservation, 
+        action: XVLAAction,
+    ):
+        model = self._runtime_model
+        processor = self._processor
+
+        #
+        _model_input_ids = processor.encode_language(observation.text)["input_ids"]
+        # TODO rm
+        # _model_image_input = einops.rearrange(
+        #     observation.images, 
+        #     "batch camera height width channel -> batch camera channel height width",
+        # )
+        _model_image_input = processor.process_image(observation.images)
+        _model_image_mask = observation.images_mask
+        _model_domain_id = observation.domain_id
+        _model_proprio = _xvla_encode_ee6d(
+            ee_transform=observation.ee_transform,
+            ee_gripper_val=observation.ee_gripper_val,
+        )
+        _model_proprio = einops.rearrange(
+            _model_proprio,
+            "batch ee buffer -> batch (ee buffer)",
+            ee=2, 
+            buffer=10,
+        )
+
+        #
+        _model_action = _xvla_encode_ee6d(
+            ee_transform=action.ee_transforms,
+            ee_gripper_val=action.ee_gripper_vals,
+        )
+        _model_action = einops.rearrange(
+            _model_action,
+            "batch time ee buffer -> batch time (ee buffer)",
+            ee=2, 
+            buffer=10,
+        )
+
+        losses = model.forward(
+            input_ids=_model_input_ids.to(model.device, non_blocking=True),
+            image_input=_model_image_input.to(model.device, non_blocking=True),
+            image_mask=_model_image_mask.to(model.device, non_blocking=True),
+            domain_id=_model_domain_id.to(model.device, non_blocking=True),
+            proprio=_model_proprio.to(model.device, non_blocking=True),
+            action=_model_action.to(model.device, non_blocking=True),
+        )
+
+        return losses
+
+    def compute_actions(
+        self,
+        observation: XVLAObservation, 
+        num_denoising_steps: int = 10,
+    ) -> XVLAAction:
+        model = self._runtime_model
+        processor = self._processor
+
+        #
+        _model_input_ids = processor.encode_language(observation.text)["input_ids"]
+        # TODO rm
+        # _model_image_input = einops.rearrange(
+        #     observation.images, 
+        #     "batch camera height width channel -> batch camera channel height width",
+        # )
+        _model_image_input = processor.process_image(observation.images)
+        _model_image_mask = observation.images_mask
+        _model_domain_id = observation.domain_id
+        _model_proprio = _xvla_encode_ee6d(
+            ee_transform=observation.ee_transform,
+            ee_gripper_val=observation.ee_gripper_val,
+        )
+        _model_proprio = einops.rearrange(
+            _model_proprio,
+            "batch ee buffer -> batch (ee buffer)",
+            ee=2, 
+            buffer=10,
+        )
+
+        _model_actions = model.generate_actions(
+            input_ids=_model_input_ids.to(model.device, non_blocking=True),
+            image_input=_model_image_input.to(model.device, non_blocking=True),
+            image_mask=_model_image_mask.to(model.device, non_blocking=True),
+            domain_id=_model_domain_id.to(model.device, non_blocking=True),
+            proprio=_model_proprio.to(model.device, non_blocking=True),
+            steps=num_denoising_steps,
+        )
+        _model_actions = einops.rearrange(
+            _model_actions,
+            "batch time (ee buffer) -> batch time ee buffer",
+            ee=2, 
+            buffer=10,
+        )
+        ee_transforms, ee_gripper_vals = _xvla_decode_ee6d(_model_actions)
+
+        return XVLAAction(
+            ee_transforms=ee_transforms,
+            ee_gripper_vals=ee_gripper_vals,
+        )
+    
+    @dataclasses.dataclass(slots=True)
+    class _LearningState:
+        optimizer: ...
+        step_count: int = 0
+
+    @functools.cached_property
+    def _learning_state(self):
+        return self._LearningState(
+            optimizer=build_optimizer(
+                model=self._runtime_model,
+                lr=1e-2,
+                weight_decay=0.,
+                # betas=tuple(args.betas),
+                # lr_coef_soft=args.learning_coef,
+            ),
+            step_count=0,
+        )
+
+    def learn(
+        self,
+        observation: XVLAObservation, 
+        action: XVLAAction,
+        #
+        freeze_step: int = 1_000,
+        max_grad_norm: float | None = 1.,
+    ):
+        model = self._runtime_model
+
+        # TODO
+        if not model.training:
+            model.train(mode=True)
+        
+        losses = self.compute_losses(observation, action)
+        total_loss = sum(losses.values())
+
+        if self._accelerator is None:
+            total_loss.backward()
+        else:
+            self._accelerator.backward(total_loss)
+
+        if max_grad_norm is not None:
+            if self._accelerator is None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            else:
+                self._accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
+
+        learning_state = self._learning_state
+        # TODO
+        update_group_lrs(
+            learning_state.optimizer, 
+            step=learning_state.step_count, 
+            args=SimpleNamespace(
+                # TODO
+                learning_rate=1e-4,
+                # TODO
+                learning_coef=1.,
+                # TODO
+                freeze_steps=freeze_step,
+                # TODO
+                warmup_steps=2000,
+                iters=1000000,
+                min_lr_ratio=.1,
+                use_cosine_decay=False,
+            ),
+        )
+        learning_state.optimizer.step()
+        learning_state.optimizer.zero_grad()
+        learning_state.step_count += 1
+
+        return learning_state.step_count, losses
