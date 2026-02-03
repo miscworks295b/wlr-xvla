@@ -126,7 +126,8 @@ def build_optimizer(model: XVLA, lr: float, weight_decay: float, betas=(0.9, 0.9
         {"name": "soft_prompts", "params": soft_prompt_params, "lr": lr * lr_coef_soft, "weight_decay": weight_decay},
         {"name": "action_heads", "params": action_params, "lr": lr, "weight_decay": weight_decay},
     ]
-    return AdamW(param_groups, betas=betas)
+    # NOTE (dogganon): `fused` is supposed to make it faster
+    return AdamW(param_groups, betas=betas, fused=True)
 
 
 def set_group_lr(optim: torch.optim.Optimizer, name: str, lr: float):

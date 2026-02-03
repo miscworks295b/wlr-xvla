@@ -3,10 +3,11 @@ import os
 import json
 import dataclasses
 import functools
-from typing import Annotated, TypedDict, Literal, Unpack
+from typing import Annotated, TypedDict, Literal, Unpack, Callable
 from types import SimpleNamespace
 
 import torch
+import torch.optim
 import einops
 import peft
 import accelerate
@@ -34,12 +35,12 @@ class XVLAObservation:
     def sample(cls):
         return cls(
             text=["do something"],
-            images=torch.full((1, 3, 3, 224, 224), fill_value=0.),
-            images_mask=torch.full((1, 3), fill_value=True),
-            domain_id=torch.full((1,), fill_value=XVLA_DOMAIN_IDS["lift2"]),
+            images=torch.full((1, 3, 3, 224, 224), fill_value=0., dtype=torch.bfloat16),
+            images_mask=torch.full((1, 3), fill_value=True, dtype=torch.bool),
+            domain_id=torch.full((1,), fill_value=XVLA_DOMAIN_IDS["lift2"], dtype=torch.long),
             # TODO
-            ee_transform=torch.full((1, 2, 4, 4), fill_value=1.),
-            ee_gripper_val=torch.full((1, 2), fill_value=0.),
+            ee_transform=torch.full((1, 2, 4, 4), fill_value=1., dtype=torch.bfloat16),
+            ee_gripper_val=torch.full((1, 2), fill_value=0., dtype=torch.bfloat16),
         )
 
     def __len__(self):
@@ -176,22 +177,6 @@ def _xvla_decode_ee6d(a: Annotated[torch.FloatTensor, "*n buffer:10"]):
     return ee_transform, ee_gripper_val
 
 
-# def _xvla_get_peft_model(model: XVLA):
-#     lora_config = peft.LoraConfig(
-#         lora_alpha=16,
-#         r=8,
-#         bias="none",
-#         target_modules="all-linear",
-#         modules_to_save=[
-#             "transformer.soft_prompt_hub",
-#             "transformer.action_encoder",
-#             "transformer.action_decoder",
-#         ],
-#     )
-#     model = peft.get_peft_model(model, lora_config)
-#     return model
-
-
 def _xvla_get_peft_config():
     return peft.LoraConfig(
         lora_alpha=16,
@@ -226,14 +211,16 @@ class XVLAAgent:
         schema: Literal["xvla-config:v0"]
         model: XVLA | os.PathLike
         processor: XVLAProcessor | os.PathLike
-        # peft_model: peft.PeftModel | os.PathLike | bool | None
         adapter: peft.PeftModel | os.PathLike | bool | None
         accelerator: accelerate.Accelerator | bool | None
+        dtype: Literal[torch.float32, torch.bfloat16] | torch.dtype | None
+        # TODO
+        # use_compile: bool | None
 
     def __init__(
         self,
-        config: Config | os.PathLike,
-        **config_kwds: Unpack[Config],
+        config: Config | os.PathLike | str,
+        **config_kwds: Unpack[Config | dict],
     ):
         base_path = None
         match config:
@@ -313,34 +300,6 @@ class XVLAAgent:
                 self._model.load_adapter
                 raise NotImplementedError("TODO")
 
-        # self._peft_model = None
-        # match config.get("peft_model"):
-        #     case bool() as should_make_peft_model:
-        #         if should_make_peft_model:
-        #             self._peft_model = _xvla_get_peft_model(self._model)             
-        #     case peft.PeftModel() as peft_model:
-        #         self._peft_model = peft_model
-        #     case dict() as pretrained_kwargs:
-        #         pretrained_kwargs = _pretrained_kwargs_from_kwargs(
-        #             pretrained_kwargs, 
-        #             base_path=base_path,
-        #         )
-        #         self._peft_model = peft.PeftModel.from_pretrained(
-        #             model=self._model,
-        #             **{
-        #                 "is_trainable": True,
-        #                 **pretrained_kwargs,
-        #             }
-        #         )
-        #     case _ as path:
-        #         self._peft_model = peft.PeftModel.from_pretrained(
-        #             model=self._model,
-        #             **{
-        #                 "is_trainable": True,
-        #                 **_pretrained_kwargs_from_path(path, base_path=base_path)
-        #             }
-        #         )
-
         self._accelerator = config.get("accelerator", None)
         match self._accelerator:
             case bool() as should_make_accelerator:
@@ -348,6 +307,10 @@ class XVLAAgent:
                     self._accelerator = accelerate.Accelerator()
             case _:
                 pass
+
+        if (_cast_dtype := config.get("dtype")) is not None:
+            self._model = self._model.to(dtype=_cast_dtype)
+
         if self._accelerator is not None:
             self._model = self._accelerator.prepare(self._model)
 
@@ -368,10 +331,6 @@ class XVLAAgent:
                 # config["peft_model"] = self._peft_model
                 config["_accelerator"] = self._accelerator
             case _ as resource:
-                # TODO
-                # if not is_main_process:
-                #     return
-
                 path = pathlib.Path(resource)
                 base_path = path.parent
                 if not force and (path.exists() or base_path.exists()):
@@ -404,31 +363,16 @@ class XVLAAgent:
                 self._processor.save_pretrained(
                     base_path / config["processor"]["pretrained_model_name_or_path"], 
                 )
-                
-                # if self._peft_model is not None:
-                #     config["peft_model"] = dict(
-                #         model_id="./xvla_peft"
-                #     )
-                #     self._peft_model.save_pretrained(
-                #         base_path / config["peft_model"]["model_id"], 
-                #         is_main_process=is_main_process,
-                #     )
 
                 with open(path, "w") as f:
                     json.dump(config, f)
-
-    @property
-    def _runtime_model(self):
-        # if self._peft_model is not None:
-        #     return self._peft_model
-        return self._model
 
     def compute_losses(
         self,
         observation: XVLAObservation, 
         action: XVLAAction,
     ):
-        model = self._runtime_model
+        model = self._model
         processor = self._processor
 
         #
@@ -464,14 +408,15 @@ class XVLAAgent:
             buffer=10,
         )
 
-        losses = model.forward(
-            input_ids=_model_input_ids.to(model.device, non_blocking=True),
-            image_input=_model_image_input.to(model.device, non_blocking=True),
-            image_mask=_model_image_mask.to(model.device, non_blocking=True),
-            domain_id=_model_domain_id.to(model.device, non_blocking=True),
-            proprio=_model_proprio.to(model.device, non_blocking=True),
-            action=_model_action.to(model.device, non_blocking=True),
-        )
+        with torch.autocast(device_type=model.device.type):
+            losses = model.forward(
+                input_ids=_model_input_ids.to(model.device, non_blocking=True),
+                image_input=_model_image_input.to(model.device, non_blocking=True),
+                image_mask=_model_image_mask.to(model.device, non_blocking=True),
+                domain_id=_model_domain_id.to(model.device, non_blocking=True),
+                proprio=_model_proprio.to(model.device, non_blocking=True),
+                action=_model_action.to(model.device, non_blocking=True),
+            )
 
         return losses
 
@@ -480,7 +425,7 @@ class XVLAAgent:
         observation: XVLAObservation, 
         num_denoising_steps: int = 10,
     ) -> XVLAAction:
-        model = self._runtime_model
+        model = self._model
         processor = self._processor
 
         #
@@ -504,14 +449,21 @@ class XVLAAgent:
             buffer=10,
         )
 
-        _model_actions = model.generate_actions(
-            input_ids=_model_input_ids.to(model.device, non_blocking=True),
-            image_input=_model_image_input.to(model.device, non_blocking=True),
-            image_mask=_model_image_mask.to(model.device, non_blocking=True),
-            domain_id=_model_domain_id.to(model.device, non_blocking=True),
-            proprio=_model_proprio.to(model.device, non_blocking=True),
-            steps=num_denoising_steps,
+        # TODO
+        generate_actions = torch.compile(
+            model.generate_actions, 
+            mode="max-autotune", 
+            fullgraph=True,
         )
+        with torch.autocast(device_type=model.device.type):
+            _model_actions = generate_actions(
+                input_ids=_model_input_ids.to(model.device, non_blocking=True),
+                image_input=_model_image_input.to(model.device, non_blocking=True),
+                image_mask=_model_image_mask.to(model.device, non_blocking=True),
+                domain_id=_model_domain_id.to(model.device, non_blocking=True),
+                proprio=_model_proprio.to(model.device, non_blocking=True),
+                steps=num_denoising_steps,
+            )
         _model_actions = einops.rearrange(
             _model_actions,
             "batch time (ee buffer) -> batch time ee buffer",
@@ -527,19 +479,54 @@ class XVLAAgent:
     
     @dataclasses.dataclass(slots=True)
     class _LearningState:
-        optimizer: ...
+        optimizer: torch.optim.AdamW
+        scheduler_fn: Callable[[torch.optim.AdamW, int], None] | None = None
         step_count: int = 0
 
     @functools.cached_property
     def _learning_state(self):
+        # TODO make customizable; align with paper
+        # optimizer
+        learning_rate = 1e-4
+        learning_rate_coef = 1.
+        weight_decay = 0.
+        betas = (0.9, 0.95)
+        # scheduler
+        num_iters = 1_000_000
+        freeze_steps = 1_000
+        warmup_steps = 2_000
+        use_cosine_decay = False
+        min_lr_ratio = .1
+
+        def scheduler_fn(optimizer: torch.optim.AdamW, step_count: int):
+            # TODO FIXME use params from learning_state.optimizer
+            _xvla_update_group_lrs(
+                optimizer, 
+                step=step_count, 
+                args=SimpleNamespace(
+                    # TODO
+                    learning_rate=learning_rate,
+                    # TODO
+                    learning_coef=learning_rate_coef,
+                    # TODO
+                    freeze_steps=freeze_steps,
+                    # TODO
+                    warmup_steps=warmup_steps,
+                    iters=num_iters,
+                    min_lr_ratio=min_lr_ratio,
+                    use_cosine_decay=use_cosine_decay,
+                ),
+            )
+
         return self._LearningState(
             optimizer=_xvla_build_optimizer(
-                model=self._runtime_model,
-                lr=1e-2,
-                weight_decay=0.,
-                # betas=tuple(args.betas),
-                # lr_coef_soft=args.learning_coef,
+                model=self._model,
+                lr=learning_rate,
+                weight_decay=weight_decay,
+                betas=tuple(betas),
+                lr_coef_soft=learning_rate_coef,
             ),
+            scheduler_fn=scheduler_fn,
             step_count=0,
         )
 
@@ -548,10 +535,9 @@ class XVLAAgent:
         observation: XVLAObservation, 
         action: XVLAAction,
         #
-        freeze_step: int = 1_000,
         max_grad_norm: float | None = 1.,
     ):
-        model = self._runtime_model
+        model = self._model
 
         # TODO
         if not model.training:
@@ -572,23 +558,9 @@ class XVLAAgent:
                 self._accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
 
         learning_state = self._learning_state
-        # TODO
-        _xvla_update_group_lrs(
+        learning_state.scheduler_fn(
             learning_state.optimizer, 
-            step=learning_state.step_count, 
-            args=SimpleNamespace(
-                # TODO
-                learning_rate=1e-4,
-                # TODO
-                learning_coef=1.,
-                # TODO
-                freeze_steps=freeze_step,
-                # TODO
-                warmup_steps=2000,
-                iters=1000000,
-                min_lr_ratio=.1,
-                use_cosine_decay=False,
-            ),
+            step_count=learning_state.step_count,
         )
         learning_state.optimizer.step()
         learning_state.optimizer.zero_grad()

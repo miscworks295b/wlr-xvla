@@ -21,22 +21,24 @@ from xvla_wlr_experiments.xvla_finetune_piper_v0 import assets
 def main(
     wlr_dataset_paths: Iterable[str] | None = None,
     checkpoint_source: ... = XVLAAgent.Config.sample(),
-    checkpoint_save_step_interval: int = 100,
+    checkpoint_save_step_interval: int | None = 100,
     checkpoint_save_target: ... = None,
     num_iterations: int = 1,
     num_iterations_per_episode: int = 10,
     num_timesteps_per_episode: int = 4,
     num_timesteps_per_action: int = 2,
-    report_step_interval: int = 10,
+    report_step_interval: int | None = 10,
+    accelerator: accelerate.Accelerator | None = None,
 ):
-    accelerator = accelerate.Accelerator(
-        # TODO NOTE accelerate does not support custom collate!!!
-        # dataloader_config=accelerate.utils.DataLoaderConfiguration(
-        #     dispatch_batches=True,  
-        #     split_batches=False,
-        #     even_batches=False,
-        # ),
-    )
+    if accelerator is None:
+        accelerator = accelerate.Accelerator(
+            # TODO NOTE accelerate does not support custom collate!!!
+            # dataloader_config=accelerate.utils.DataLoaderConfiguration(
+            #     dispatch_batches=True,  
+            #     split_batches=False,
+            #     even_batches=False,
+            # ),
+        )
 
     with contextlib.ExitStack() as context_stack:
         pbar = context_stack.enter_context(tqdm.auto.tqdm(total=1., leave=False))
@@ -135,14 +137,15 @@ def main(
                             action=action,
                         )
 
-                        if epoch % report_step_interval == 0:
-                            pbar.set_description(
-                                f"Epoch: {epoch}. "
-                                f"Loss: {({name: x.item() for name, x in losses.items()})}"
-                            )
+                        if report_step_interval is not None:
+                            if epoch % report_step_interval == 0:
+                                pbar.set_description(
+                                    f"Epoch: {epoch}. "
+                                    f"Loss: {({name: x.item() for name, x in losses.items()})}"
+                                )
 
-                        if epoch % checkpoint_save_step_interval == 0:
-                            if accelerator.is_main_process:
+                        if checkpoint_save_step_interval is not None:
+                            if epoch % checkpoint_save_step_interval == 0:
                                 def resolve_checkpoint_path(path_or_path_gen):
                                     match path_or_path_gen:
                                         case None:
@@ -158,6 +161,7 @@ def main(
                                 if checkpoint_save_path_ is not None:
                                     agent.save(checkpoint_save_path_, force=True)
                                     pbar.set_description(f"Checkpoint at epoch {epoch}: {checkpoint_save_path_}")
+
 
 if __name__ == "__main__":
     main()

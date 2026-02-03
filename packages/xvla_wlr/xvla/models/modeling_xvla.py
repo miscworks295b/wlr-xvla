@@ -92,7 +92,7 @@ class XVLA(PreTrainedModel):
         )
 
         # Deferred FastAPI app
-        self.app: FastAPI | None = None
+        self.app: "FastAPI | None" = None
 
     # ============================= Florence2 encoder =============================
     def forward_vlm(

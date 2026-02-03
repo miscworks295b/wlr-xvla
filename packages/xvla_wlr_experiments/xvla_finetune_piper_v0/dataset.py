@@ -9,7 +9,7 @@ import torchvision.transforms.functional
 from curobo.types.robot import RobotConfig
 from curobo.types.base import TensorDeviceType as _CuroboTensorDeviceType
 from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
-from xvla_wlr.model_legacy import DATA_DOMAIN_ID, Observation, Action
+from xvla_wlr.agent import XVLAAction, XVLAObservation, XVLA_DOMAIN_IDS
 from datasets_wlr import WLRZhuangEpisodeDataset
 
 
@@ -19,7 +19,7 @@ def compute_conservative_reach_radius(robot: RobotConfig):
     return torch.sum(torch.linalg.norm(link_transforms_positions, dim=-1))
 
 
-def normalize_observation(robots: list[RobotConfig], observation: Observation):
+def normalize_observation(robots: list[RobotConfig], observation: XVLAObservation):
     ee_transform = observation.ee_transform.clone()
     *_, num_ees, _, _ = ee_transform.shape
     for i_ee in range(num_ees):
@@ -42,7 +42,7 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
         dataset: WLRZhuangEpisodeDataset,
         robot_config_left: RobotConfig,
         robot_config_right: RobotConfig,
-        domain_id: Annotated[int, DATA_DOMAIN_ID],
+        domain_id: Annotated[int, XVLA_DOMAIN_IDS],
         prefetch: bool = False,
         device: torch.device | None = None,
     ):
@@ -132,7 +132,7 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
             "ee batch -> batch ee",
         )
 
-        observation = Observation(
+        observation = XVLAObservation(
             text=text,
             images=images,
             images_mask=images_mask,
@@ -145,14 +145,14 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
     
 
 class XVLAChunk(NamedTuple):
-    observation: Observation
-    action: Action
+    observation: XVLAObservation
+    action: XVLAAction
 
 
 class XVLAChunkDataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        xvla_dataset: torch.utils.data.Dataset[Observation],
+        xvla_dataset: torch.utils.data.Dataset[XVLAObservation],
         *,
         num_timesteps_per_episode: int,
         num_timesteps_per_action: int,
@@ -183,7 +183,7 @@ class XVLAChunkDataset(torch.utils.data.Dataset):
 
         observation = self.dataset[start:stop]
 
-        action = Action.from_observation(
+        action = XVLAAction.from_observation(
             observation,
             num_steps=self.num_timesteps_per_action,
         )
