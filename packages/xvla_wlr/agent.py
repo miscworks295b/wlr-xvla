@@ -408,17 +408,24 @@ class XVLAAgent:
             buffer=10,
         )
 
-        with torch.autocast(device_type=model.device.type):
-            losses = model.forward(
-                input_ids=_model_input_ids.to(model.device, non_blocking=True),
-                image_input=_model_image_input.to(model.device, non_blocking=True),
-                image_mask=_model_image_mask.to(model.device, non_blocking=True),
-                domain_id=_model_domain_id.to(model.device, non_blocking=True),
-                proprio=_model_proprio.to(model.device, non_blocking=True),
-                action=_model_action.to(model.device, non_blocking=True),
-            )
+        losses = model.forward(
+            input_ids=_model_input_ids.to(model.device, non_blocking=True),
+            image_input=_model_image_input.to(model.device, dtype=model.dtype, non_blocking=True),
+            image_mask=_model_image_mask.to(model.device, non_blocking=True),
+            domain_id=_model_domain_id.to(model.device, non_blocking=True),
+            proprio=_model_proprio.to(model.device, dtype=model.dtype, non_blocking=True),
+            action=_model_action.to(model.device, non_blocking=True),
+        )
 
         return losses
+    
+    @functools.cached_property
+    def _compiled_model_generate_actions(self):
+        return torch.compile(
+            self._model.generate_actions, 
+            mode="max-autotune", 
+            fullgraph=True,
+        )
 
     def compute_actions(
         self,
@@ -449,21 +456,14 @@ class XVLAAgent:
             buffer=10,
         )
 
-        # TODO
-        generate_actions = torch.compile(
-            model.generate_actions, 
-            mode="max-autotune", 
-            fullgraph=True,
+        _model_actions = self._compiled_model_generate_actions(
+            input_ids=_model_input_ids.to(model.device, non_blocking=True),
+            image_input=_model_image_input.to(model.device, dtype=model.dtype, non_blocking=True),
+            image_mask=_model_image_mask.to(model.device, non_blocking=True),
+            domain_id=_model_domain_id.to(model.device, non_blocking=True),
+            proprio=_model_proprio.to(model.device, dtype=model.dtype, non_blocking=True),
+            steps=num_denoising_steps,
         )
-        with torch.autocast(device_type=model.device.type):
-            _model_actions = generate_actions(
-                input_ids=_model_input_ids.to(model.device, non_blocking=True),
-                image_input=_model_image_input.to(model.device, non_blocking=True),
-                image_mask=_model_image_mask.to(model.device, non_blocking=True),
-                domain_id=_model_domain_id.to(model.device, non_blocking=True),
-                proprio=_model_proprio.to(model.device, non_blocking=True),
-                steps=num_denoising_steps,
-            )
         _model_actions = einops.rearrange(
             _model_actions,
             "batch time (ee buffer) -> batch time ee buffer",
@@ -489,7 +489,7 @@ class XVLAAgent:
         # optimizer
         learning_rate = 1e-4
         learning_rate_coef = 1.
-        weight_decay = 0.
+        weight_decay = 1e-2
         betas = (0.9, 0.95)
         # scheduler
         num_iters = 1_000_000

@@ -1,7 +1,7 @@
-import glob
 import asyncio
 import os
 
+import accelerate
 import xvla_wlr_experiments.xvla_finetune_piper_v0.experiment_next as _experiment
 
 
@@ -23,14 +23,18 @@ async def main():
     if os.path.exists(current_checkpoint_path):
         checkpoint_source = current_checkpoint_path
 
+    accelerator = accelerate.Accelerator()
+
     await _experiment.main(
-        glob.glob("/liujinxin/dataset/piper/cloth_new/**/data.json", recursive=True), 
-        num_iterations=2,
-        num_iterations_per_episode=16,
-        num_timesteps_per_episode=32,
-        num_timesteps_per_action=4,
+        num_iterations=16,
+        num_iterations_per_episode=2,
         checkpoint_source=checkpoint_source,
         checkpoint_save_target=current_checkpoint_path,
+        # checkpoint_save_step_interval=10,
+        report_step_interval=10,
+        # report_step_interval=None,
+        # checkpoint_save_step_interval=None,
+        accelerator=accelerator,
     )
 
 

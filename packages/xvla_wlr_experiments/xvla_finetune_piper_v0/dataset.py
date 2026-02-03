@@ -196,3 +196,26 @@ class XVLAChunkDataset(torch.utils.data.Dataset):
             action=action_next,
         )
 
+
+def xvla_dataset_chunk_collate(chunks: list[XVLAChunk]):
+    _concat = lambda arrays: (
+        torch.concatenate(arrays, dim=0)
+        if torch.is_tensor(arrays[0]) else
+        numpy.concatenate(arrays, axis=0)
+    )
+
+    observation = XVLAObservation(
+        text=_concat([chunk.observation.text for chunk in chunks]),
+        images=_concat([chunk.observation.images for chunk in chunks]),
+        images_mask=_concat([chunk.observation.images_mask for chunk in chunks]),
+        domain_id=_concat([chunk.observation.domain_id for chunk in chunks]),
+        ee_transform=_concat([chunk.observation.ee_transform for chunk in chunks]),
+        ee_gripper_val=_concat([chunk.observation.ee_gripper_val for chunk in chunks]),
+    )
+
+    action = XVLAAction(
+        ee_transforms=_concat([chunk.action.ee_transforms for chunk in chunks]),
+        ee_gripper_vals=_concat([chunk.action.ee_gripper_vals for chunk in chunks]),
+    )
+    
+    return XVLAChunk(observation=observation, action=action)
