@@ -86,7 +86,22 @@ async def load_datasets(
             yield (await asyncio.to_thread(_impl, path), path)
 
 
-async def main(
+def load_dataset_chunks(
+    dataset: XVLAWLRZhuangEpisodeDataset,
+    num_timesteps_per_episode: int = 4,
+    num_timesteps_per_action: int = 2,
+) -> torch.utils.data.DataLoader[XVLAChunk]:
+    return torch.utils.data.DataLoader(
+        XVLAChunkDataset(
+            xvla_dataset=dataset,
+            num_timesteps_per_episode=num_timesteps_per_episode,
+            num_timesteps_per_action=num_timesteps_per_action,
+        ),
+        collate_fn=xvla_dataset_chunk_collate,
+    )
+
+
+async def train(
     wlr_dataset_paths: Iterable[str] | None = None,
     checkpoint_source: ... = XVLAAgent.Config.sample(),
     checkpoint_save_step_interval: int | None = 100,
@@ -118,16 +133,12 @@ async def main(
 
         for _ in range(num_iterations):
             async for dataset, path in load_datasets(wlr_dataset_paths, device=accelerator.device):
-                pbar.set_description(f"Using episode dataset: {path}")
+                pbar.set_description_str(f"Using episode dataset: {path}")
 
-                # TODO
-                xvla_dataset_chunk_loader = torch.utils.data.DataLoader(
-                    XVLAChunkDataset(
-                        xvla_dataset=dataset,
-                        num_timesteps_per_episode=num_timesteps_per_episode,
-                        num_timesteps_per_action=num_timesteps_per_action,
-                    ),
-                    collate_fn=xvla_dataset_chunk_collate,
+                xvla_dataset_chunk_loader = load_dataset_chunks(
+                    dataset,
+                    num_timesteps_per_episode=num_timesteps_per_episode,
+                    num_timesteps_per_action=num_timesteps_per_action,
                 )
                 xvla_dataset_chunk_loader = accelerator.prepare(xvla_dataset_chunk_loader)
 
@@ -142,10 +153,10 @@ async def main(
                                 )
                         epoch, losses = await asyncio.to_thread(_learn_threadsafe)
 
+                        pbar.update()
                         if report_step_interval is not None:
                             if epoch % report_step_interval == 0:
-                                pbar.update()
-                                pbar.set_description(
+                                pbar.set_postfix_str(
                                     f"Epoch: {epoch}. "
                                     f"Loss: {({name: x.item() for name, x in losses.items()})}"
                                 )
@@ -165,9 +176,59 @@ async def main(
                                             return None
                                 checkpoint_save_path_ = resolve_checkpoint_path(checkpoint_save_target)
                                 if checkpoint_save_path_ is not None:
-                                    agent.save(checkpoint_save_path_, force=True)
+                                    def _save_threadsafe():
+                                        with _lock:
+                                            agent.save(checkpoint_save_path_, force=True)
+                                    await asyncio.to_thread(_save_threadsafe)
                                     pbar.set_description(f"Checkpoint at epoch {epoch}: {checkpoint_save_path_}")
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+async def evaluate(
+    wlr_dataset_paths: Iterable[str] | None = None,
+    checkpoint_source: ... = XVLAAgent.Config.sample(),
+    num_timesteps_per_episode: int = 4,
+    num_timesteps_per_action: int = 2,
+    report_step_interval: int | None = 1,
+    accelerator: accelerate.Accelerator | None = None,
+):
+    if accelerator is None:
+        accelerator = accelerate.Accelerator(
+            # TODO NOTE accelerate does not support custom collate!!!
+            # dataloader_config=accelerate.utils.DataLoaderConfiguration(
+            #     dispatch_batches=True,  
+            #     split_batches=False,
+            #     even_batches=False,
+            # ),
+        )
+
+    with contextlib.ExitStack() as context_stack:
+        pbar = context_stack.enter_context(tqdm.auto.tqdm(leave=True))
+
+        # TODO
+        agent = XVLAAgent(checkpoint_source, accelerator=accelerator)
+
+        async for dataset, path in load_datasets(wlr_dataset_paths, device=accelerator.device):
+            pbar.set_description_str(f"Using episode dataset: {path}")
+
+            xvla_dataset_chunk_loader = load_dataset_chunks(
+                dataset,
+                num_timesteps_per_episode=num_timesteps_per_episode,
+                num_timesteps_per_action=num_timesteps_per_action,
+            )
+            xvla_dataset_chunk_loader = accelerator.prepare(xvla_dataset_chunk_loader)
+
+            for observation, action in xvla_dataset_chunk_loader:
+                losses = agent.compute_losses(
+                    observation=observation,
+                    action=action,
+                    requires_grad=False,
+                )
+
+                pbar.update()
+                if report_step_interval is not None:
+                    epoch = pbar.n
+                    if epoch % report_step_interval == 0:
+                        pbar.set_postfix_str(
+                            f"Epoch: {epoch}. "
+                            f"Loss: {({name: x.item() for name, x in losses.items()})}"
+                        )

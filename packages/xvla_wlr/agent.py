@@ -192,7 +192,7 @@ def _xvla_get_peft_config():
 
 
 class XVLAAgent:
-    class Config(TypedDict):
+    class Config(TypedDict, total=False):
         @staticmethod
         def sample():
             return XVLAAgent.Config(
@@ -219,11 +219,13 @@ class XVLAAgent:
 
     def __init__(
         self,
-        config: Config | os.PathLike | str,
-        **config_kwds: Unpack[Config | dict],
+        config: Config | os.PathLike | str | None = None,
+        **config_kwds: Unpack[Config],
     ):
         base_path = None
         match config:
+            case None:
+                config = self.Config.sample()
             case dict():
                 config = config
             case _:
@@ -379,6 +381,7 @@ class XVLAAgent:
         self,
         observation: XVLAObservation, 
         action: XVLAAction,
+        requires_grad: bool | None = None,
     ):
         model = self._model
         processor = self._processor
@@ -416,14 +419,15 @@ class XVLAAgent:
             buffer=10,
         )
 
-        losses = self._compiled_model_forward(
-            input_ids=_model_input_ids.to(model.device, non_blocking=True),
-            image_input=_model_image_input.to(model.device, dtype=model.dtype, non_blocking=True),
-            image_mask=_model_image_mask.to(model.device, non_blocking=True),
-            domain_id=_model_domain_id.to(model.device, non_blocking=True),
-            proprio=_model_proprio.to(model.device, dtype=model.dtype, non_blocking=True),
-            action=_model_action.to(model.device, dtype=model.dtype, non_blocking=True),
-        )
+        with torch.set_grad_enabled(mode=self._model.training if requires_grad is None else requires_grad):
+            losses = self._compiled_model_forward(
+                input_ids=_model_input_ids.to(model.device, non_blocking=True),
+                image_input=_model_image_input.to(model.device, dtype=model.dtype, non_blocking=True),
+                image_mask=_model_image_mask.to(model.device, non_blocking=True),
+                domain_id=_model_domain_id.to(model.device, non_blocking=True),
+                proprio=_model_proprio.to(model.device, dtype=model.dtype, non_blocking=True),
+                action=_model_action.to(model.device, dtype=model.dtype, non_blocking=True),
+            )
 
         return losses
     
@@ -552,7 +556,7 @@ class XVLAAgent:
         if not model.training:
             model.train(mode=True)
     
-        losses = self.compute_losses(observation, action)
+        losses = self.compute_losses(observation, action, requires_grad=True)
         total_loss = sum(losses.values())
 
         if self._accelerator is None:

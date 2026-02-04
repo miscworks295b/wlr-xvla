@@ -30,18 +30,20 @@ async def main():
     with torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
     ) as prof:
-        await _experiment.main(
+        await _experiment.train(
             num_iterations=1,
             num_iterations_per_episode=32,
             checkpoint_source=checkpoint_source,
             checkpoint_save_target=current_checkpoint_path,
-            # checkpoint_save_step_interval=10,
+            checkpoint_save_step_interval=10,
             report_step_interval=10,
             # report_step_interval=None,
-            checkpoint_save_step_interval=None,
+            # checkpoint_save_step_interval=None,
             accelerator=accelerator,
         )
     print(prof.key_averages().table(sort_by="self_cuda_time_total"))
     prof.export_chrome_trace(f"{os.path.dirname(__file__)}/logs/trace-{accelerator.process_index}.json")
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
