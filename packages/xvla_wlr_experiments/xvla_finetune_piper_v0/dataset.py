@@ -54,16 +54,17 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
                 "cuda",
                 index=torch.cuda.current_device(),
             )
+        self._device = device
         self._ik_solver_left = IKSolver(
             IKSolverConfig.load_from_robot_config(
                 robot_cfg=robot_config_left,
-                tensor_args=_CuroboTensorDeviceType(device=device),
+                tensor_args=_CuroboTensorDeviceType(device=self._device),
             ),
         )
         self._ik_solver_right = IKSolver(
             IKSolverConfig.load_from_robot_config(
                 robot_cfg=robot_config_right,
-                tensor_args=_CuroboTensorDeviceType(device=device),
+                tensor_args=_CuroboTensorDeviceType(device=self._device),
             )
         )
         # TODO
@@ -80,7 +81,10 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
 
         images = einops.rearrange(
             [
-                torchvision.transforms.functional.resize(torch.asarray(image), [224, 224])
+                torchvision.transforms.functional.resize(
+                    torch.asarray(image, device=self._device), 
+                    size=[224, 224],
+                )
                 for image in [
                     data.image_left,
                     data.image_front,
@@ -90,13 +94,13 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
             "camera batch channel height width -> batch camera channel height width",
         )
         images_mask = einops.repeat(
-            torch.asarray(True),
+            torch.asarray(True, device=self._device),
             "-> batch camera",
             **einops.parse_shape(images, "batch camera _ _ _"),
         )
 
         domain_id = einops.repeat(
-            torch.asarray(self._domain_id),
+            torch.asarray(self._domain_id, device=self._device),
             "-> batch",
             **einops.parse_shape(text, "batch"),
         )
@@ -133,12 +137,12 @@ class XVLAWLRZhuangEpisodeDataset(torch.utils.data.Dataset):
         )
 
         observation = XVLAObservation(
-            text=text,
-            images=images,
-            images_mask=images_mask,
-            domain_id=domain_id,
-            ee_transform=ee_transforms,
-            ee_gripper_val=ee_gripper_vals,
+            text=numpy.asarray(text),
+            images=torch.asarray(images, device=self._device),
+            images_mask=torch.asarray(images_mask, device=self._device),
+            domain_id=torch.asarray(domain_id, device=self._device),
+            ee_transform=torch.asarray(ee_transforms, device=self._device),
+            ee_gripper_val=torch.asarray(ee_gripper_vals, device=self._device),
         )
 
         return observation

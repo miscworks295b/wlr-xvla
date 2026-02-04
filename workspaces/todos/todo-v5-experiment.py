@@ -1,3 +1,3 @@
-from xvla_wlr_experiments.xvla_finetune_piper_v0.experiment import main
+from xvla_wlr_experiments.xvla_finetune_piper_v0.experiment_legacy import main
 
 main(num_iterations=10)

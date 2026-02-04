@@ -69,8 +69,8 @@ class XVLAAction:
         # TODO use torch.eye(4, 4) for transforms
         return cls(
             # TODO
-            ee_transforms=torch.full((1, 30, 2, 4, 4), fill_value=1.),
-            ee_gripper_vals=torch.full((1, 30, 2), fill_value=0.),
+            ee_transforms=torch.full((1, 30, 2, 4, 4), fill_value=1., dtype=torch.bfloat16),
+            ee_gripper_vals=torch.full((1, 30, 2), fill_value=0., dtype=torch.bfloat16),
         )
     
     @classmethod
@@ -367,6 +367,14 @@ class XVLAAgent:
                 with open(path, "w") as f:
                     json.dump(config, f)
 
+    @functools.cached_property
+    def _compiled_model_forward(self):
+        return torch.compile(
+            self._model.forward,
+            # fullgraph=True,
+            disable=True,
+        )
+
     def compute_losses(
         self,
         observation: XVLAObservation, 
@@ -408,13 +416,13 @@ class XVLAAgent:
             buffer=10,
         )
 
-        losses = model.forward(
+        losses = self._compiled_model_forward(
             input_ids=_model_input_ids.to(model.device, non_blocking=True),
             image_input=_model_image_input.to(model.device, dtype=model.dtype, non_blocking=True),
             image_mask=_model_image_mask.to(model.device, non_blocking=True),
             domain_id=_model_domain_id.to(model.device, non_blocking=True),
             proprio=_model_proprio.to(model.device, dtype=model.dtype, non_blocking=True),
-            action=_model_action.to(model.device, non_blocking=True),
+            action=_model_action.to(model.device, dtype=model.dtype, non_blocking=True),
         )
 
         return losses
@@ -425,6 +433,7 @@ class XVLAAgent:
             self._model.generate_actions, 
             mode="max-autotune", 
             fullgraph=True,
+            disable=False,
         )
 
     def compute_actions(
@@ -542,7 +551,7 @@ class XVLAAgent:
         # TODO
         if not model.training:
             model.train(mode=True)
-        
+    
         losses = self.compute_losses(observation, action)
         total_loss = sum(losses.values())
 

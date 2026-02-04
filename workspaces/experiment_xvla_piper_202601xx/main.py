@@ -2,7 +2,7 @@ import glob
 import asyncio
 import os
 
-import xvla_wlr_experiments.xvla_finetune_piper_v0.experiment_next as _experiment
+import xvla_wlr_experiments.xvla_finetune_piper_v0.experiment as _experiment
 
 
 async def main():
@@ -26,7 +26,7 @@ async def main():
     await _experiment.main(
         glob.glob("/liujinxin/dataset/piper/cloth_new/**/data.json", recursive=True), 
         num_iterations=2,
-        num_iterations_per_episode=16,
+        num_iterations_per_episode=4,
         num_timesteps_per_episode=32,
         num_timesteps_per_action=4,
         checkpoint_source=checkpoint_source,
