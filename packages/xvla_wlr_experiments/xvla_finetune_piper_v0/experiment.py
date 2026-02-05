@@ -22,6 +22,7 @@ from xvla_wlr_experiments.xvla_finetune_piper_v0 import assets
 
 async def load_datasets(
     paths: Iterable[str] | None = None,
+    prefetch: bool = True,
     device: torch.device | None = None,
 ):
     with contextlib.ExitStack() as context_stack:
@@ -77,7 +78,7 @@ async def load_datasets(
                     )),
                 ),
                 domain_id=XVLA_DOMAIN_IDS["AIR-AGILEX-HQ"],
-                prefetch=True,
+                prefetch=prefetch,
                 # TODO
                 device=device,
             )
@@ -126,14 +127,19 @@ async def train(
         )
 
     with contextlib.ExitStack() as context_stack:
-        pbar = context_stack.enter_context(tqdm.auto.tqdm(leave=False))
+        pbar = context_stack.enter_context(tqdm.auto.tqdm())
 
         # TODO
         agent = XVLAAgent(checkpoint_source, accelerator=accelerator)
 
+        # TODO FIXME mem leaks
         for _ in range(num_iterations):
-            async for dataset, path in load_datasets(wlr_dataset_paths, device=accelerator.device):
-                pbar.set_description_str(f"Using episode dataset: {path}")
+            async for dataset, dataset_path in load_datasets(
+                wlr_dataset_paths, 
+                prefetch=True, 
+                device=accelerator.device,
+            ):
+                tqdm.auto.tqdm.write(f"Dataset: {dataset_path}")
 
                 xvla_dataset_chunk_loader = load_dataset_chunks(
                     dataset,
@@ -141,8 +147,9 @@ async def train(
                     num_timesteps_per_action=num_timesteps_per_action,
                 )
                 xvla_dataset_chunk_loader = accelerator.prepare(xvla_dataset_chunk_loader)
-
                 chunks = list(xvla_dataset_chunk_loader)
+                accelerator.free_memory(xvla_dataset_chunk_loader)
+
                 for _ in range(num_iterations_per_episode):
                     for observation, action in chunks:
                         def _learn_threadsafe():
@@ -158,6 +165,7 @@ async def train(
                             if epoch % report_step_interval == 0:
                                 pbar.set_postfix_str(
                                     f"Epoch: {epoch}. "
+                                    # f"Dataset: {dataset_path}. "
                                     f"Loss: {({name: x.item() for name, x in losses.items()})}"
                                 )
 
@@ -180,7 +188,10 @@ async def train(
                                         with _lock:
                                             agent.save(checkpoint_save_path_, force=True)
                                     await asyncio.to_thread(_save_threadsafe)
-                                    pbar.set_description(f"Checkpoint at epoch {epoch}: {checkpoint_save_path_}")
+                                    pbar.set_postfix_str(
+                                        f"Epoch: {epoch}. "
+                                        f"Checkpoint: {checkpoint_save_path_}"
+                                    )
 
 
 async def evaluate(

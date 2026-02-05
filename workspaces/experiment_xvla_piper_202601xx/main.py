@@ -24,9 +24,9 @@ if os.path.exists(current_checkpoint_path):
     checkpoint_source = current_checkpoint_path
 
 
-async def train():
+async def train(dataset_path: str | None = None):
     await _experiment.train(
-        glob.glob("/liujinxin/dataset/piper/cloth_new/**/data.json", recursive=True), 
+        glob.glob(dataset_path, recursive=True) if dataset_path is not None else None, 
         num_iterations=2,
         num_iterations_per_episode=4,
         num_timesteps_per_episode=32,
@@ -36,9 +36,9 @@ async def train():
     )
 
 
-async def evaluate():
+async def evaluate(dataset_path: str | None = None):
     await _experiment.evaluate(
-        glob.glob("/liujinxin/dataset/piper/cloth_new/**/data.json", recursive=True), 
+        glob.glob(dataset_path, recursive=True) if dataset_path is not None else None, 
         num_timesteps_per_episode=32,
         num_timesteps_per_action=4,
         checkpoint_source=checkpoint_source,
@@ -52,10 +52,16 @@ if __name__ == "__main__":
         nargs="?",
         choices=["train", "evaluate"], 
         default="train",
+        help="Command.",
+    )
+    argparser.add_argument(
+        "--dataset-path",
+        default=None,
+        help="Dataset path pattern. Example: /liujinxin/dataset/piper/cloth_new/**/data.json"
     )
     args = argparser.parse_args()
     match args.command:
         case "train":
-            asyncio.run(train())
+            asyncio.run(train(dataset_path=args.dataset_path))
         case "evaluate":
-            asyncio.run(evaluate())
+            asyncio.run(evaluate(dataset_path=args.dataset_path))

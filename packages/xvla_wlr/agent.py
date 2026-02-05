@@ -123,7 +123,11 @@ def _xvla_encode_ee6d(
     *batch_size_gripper, = ee_gripper_val.shape
     batch_size = torch.broadcast_shapes(batch_size_ee_transform, batch_size_gripper)
     # TODO
-    a = torch.empty((*batch_size, 10))
+    a = torch.empty(
+        (*batch_size, 10),
+        dtype=ee_transform.dtype,
+        device=ee_transform.device,
+    )
     a[..., 0:3] = ee_transform[..., :3, [3]].reshape(*batch_size, -1)
     a[..., 3:9] = ee_transform[..., :3, [0, 1]].reshape(*batch_size, -1)
     a[..., 9:10] = ee_gripper_val.reshape(*batch_size, -1)
@@ -166,7 +170,11 @@ def _xvla_decode_ee6d(a: Annotated[torch.FloatTensor, "*n buffer:10"]):
     translation = a[..., 0:3]
     rotation = _xvla_rotation_6d_to_matrix(a[..., 3:9])
 
-    ee_transform = torch.empty((*batch_size, 4, 4))
+    ee_transform = torch.empty(
+        (*batch_size, 4, 4),
+        dtype=a.dtype,
+        device=a.device,
+    )
     ee_transform[..., :3, :3] = rotation
     ee_transform[..., :3, 3] = translation
     ee_transform[..., 3, :3] = 0.
@@ -235,7 +243,7 @@ class XVLAAgent:
         config = XVLAAgent.Config(config, **config_kwds)
 
         if config.get("schema") is not None:
-            assert config["schema"] == "xvla-config:v0"
+            assert config.get("schema") == "xvla-config:v0"
 
         def _pretrained_kwargs_from_path(path: ..., base_path: ...):
             if base_path is not None:
@@ -302,13 +310,13 @@ class XVLAAgent:
                 self._model.load_adapter
                 raise NotImplementedError("TODO")
 
-        self._accelerator = config.get("accelerator", None)
-        match self._accelerator:
+        self._accelerator = None
+        match config.get("accelerator", None):
             case bool() as should_make_accelerator:
                 if should_make_accelerator:
                     self._accelerator = accelerate.Accelerator()
-            case _:
-                pass
+            case _ as accelerator:
+                self._accelerator = accelerator
 
         if (_cast_dtype := config.get("dtype")) is not None:
             self._model = self._model.to(dtype=_cast_dtype)
